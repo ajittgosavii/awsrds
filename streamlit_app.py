@@ -238,18 +238,18 @@ st.markdown("""
         background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
         padding: 1rem;
         border-radius: 10px;
-        color: #333;
         text-align: center;
         margin: 0.5rem 0;
     }
     .metric-value {
         font-size: 2rem;
         font-weight: bold;
-        color: #111;
+        color: #000000 !important;
     }
     .metric-label {
         font-size: 0.9rem;
-        opacity: 0.9;
+        color: #000000 !important;
+        opacity: 0.8;
     }
     .advisory-box {
         background: #fff3cd;
@@ -570,14 +570,5 @@ st.markdown("---")
 st.markdown("""
 **🎯 Key Improvements:**
 - ✅ Environment-specific sizing (PROD, SQA, QA, DEV with different resource factors)
-- ✅ Real-time AWS pricing integration (when credentials available)
-- ✅ Improved instance selection logic to avoid same-size recommendations
-- ✅ Better cost optimization strategies per environment
-- ✅ Enhanced error handling and debugging capabilities
-- ✅ Visual resource allocation comparisons
-
-**🔧 Setup for Real-time Pricing:**
-1. Configure AWS credentials: `aws configure`
-2. Ensure IAM permissions for pricing:GetProducts and rds:DescribeDBInstances
-3. Refresh the app to enable real-time pricing
+- ✅ Refresh the app to enable real-time pricing
 """)
