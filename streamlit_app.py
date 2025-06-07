@@ -146,12 +146,7 @@ with st.sidebar:
         enable_perf_insights = st.checkbox("Performance Insights", True)
         compliance_framework = st.multiselect("Compliance Framework", 
                                             ["HIPAA", "PCI-DSS", "GDPR", "SOC2"])
-    with st.sidebar:
-    st.header(":cloud: AWS Configuration")
-    region = st.selectbox("AWS Region", ["us-east-1", "us-west-1", "us-west-2", "eu-west-1", "ap-southeast-1"], index=0)
     
-    st.header(":gear: Database Settings")
-    engine = st.selectbox("Database Engine", calculator.ENGINES, index=0)
     
     # Add deployment model selection for Aurora
     if engine.startswith('aurora'):
