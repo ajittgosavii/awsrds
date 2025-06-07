@@ -63,10 +63,18 @@ class RDSDatabaseSizingCalculator:
         'All Upfront': {'1yr': 0.4, '3yr': 0.55}
     }
     
-    # Static instance database from JSON file
+    # Static instance database from JSON file - Enhanced with more instance types
     INSTANCE_DB = {
         "us-east-1": {
             "oracle-ee": [
+                {
+                    "type": "db.t3.medium",
+                    "vCPU": 2,
+                    "memory": 4,
+                    "max_iops": 2000,
+                    "network_perf": "Up to 5 Gbps",
+                    "pricing": {"ondemand": 0.136}
+                },
                 {
                     "type": "db.m5.large",
                     "vCPU": 2,
@@ -74,14 +82,6 @@ class RDSDatabaseSizingCalculator:
                     "max_iops": 7000,
                     "network_perf": "Up to 10 Gbps",
                     "pricing": {"ondemand": 0.475}
-                },
-                {
-                    "type": "db.r5.2xlarge",
-                    "vCPU": 8,
-                    "memory": 64,
-                    "max_iops": 35000,
-                    "network_perf": "Up to 10 Gbps",
-                    "pricing": {"ondemand": 1.92}
                 },
                 {
                     "type": "db.m5.xlarge",
@@ -98,9 +98,49 @@ class RDSDatabaseSizingCalculator:
                     "max_iops": 15000,
                     "network_perf": "Up to 10 Gbps",
                     "pricing": {"ondemand": 1.90}
+                },
+                {
+                    "type": "db.m5.4xlarge",
+                    "vCPU": 16,
+                    "memory": 64,
+                    "max_iops": 18750,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 3.80}
+                },
+                {
+                    "type": "db.r5.large",
+                    "vCPU": 2,
+                    "memory": 16,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.60}
+                },
+                {
+                    "type": "db.r5.xlarge",
+                    "vCPU": 4,
+                    "memory": 32,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 1.20}
+                },
+                {
+                    "type": "db.r5.2xlarge",
+                    "vCPU": 8,
+                    "memory": 64,
+                    "max_iops": 35000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 1.92}
                 }
             ],
             "aurora-postgresql": [
+                {
+                    "type": "db.t3.medium",
+                    "vCPU": 2,
+                    "memory": 4,
+                    "max_iops": 2000,
+                    "network_perf": "Up to 5 Gbps",
+                    "pricing": {"ondemand": 0.082}
+                },
                 {
                     "type": "db.r5.large",
                     "vCPU": 2,
@@ -108,6 +148,22 @@ class RDSDatabaseSizingCalculator:
                     "max_iops": 15000,
                     "network_perf": "Up to 10 Gbps",
                     "pricing": {"ondemand": 0.285}
+                },
+                {
+                    "type": "db.r5.xlarge",
+                    "vCPU": 4,
+                    "memory": 32,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.57}
+                },
+                {
+                    "type": "db.r5.2xlarge",
+                    "vCPU": 8,
+                    "memory": 64,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 1.14}
                 },
                 {
                     "type": "db.serverless",
@@ -120,15 +176,79 @@ class RDSDatabaseSizingCalculator:
             ],
             "postgres": [
                 {
+                    "type": "db.t3.micro",
+                    "vCPU": 2,
+                    "memory": 1,
+                    "max_iops": 2000,
+                    "network_perf": "Up to 5 Gbps",
+                    "pricing": {"ondemand": 0.0255}
+                },
+                {
+                    "type": "db.t3.small",
+                    "vCPU": 2,
+                    "memory": 2,
+                    "max_iops": 2000,
+                    "network_perf": "Up to 5 Gbps",
+                    "pricing": {"ondemand": 0.051}
+                },
+                {
+                    "type": "db.t3.medium",
+                    "vCPU": 2,
+                    "memory": 4,
+                    "max_iops": 2000,
+                    "network_perf": "Up to 5 Gbps",
+                    "pricing": {"ondemand": 0.102}
+                },
+                {
+                    "type": "db.m5.large",
+                    "vCPU": 2,
+                    "memory": 8,
+                    "max_iops": 7000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.192}
+                },
+                {
                     "type": "db.m5.xlarge",
                     "vCPU": 4,
                     "memory": 16,
                     "max_iops": 10000,
                     "network_perf": "Up to 10 Gbps",
                     "pricing": {"ondemand": 0.228}
+                },
+                {
+                    "type": "db.m5.2xlarge",
+                    "vCPU": 8,
+                    "memory": 32,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.768}
                 }
             ],
             "sqlserver": [
+                {
+                    "type": "db.t3.small",
+                    "vCPU": 2,
+                    "memory": 2,
+                    "max_iops": 2000,
+                    "network_perf": "Up to 5 Gbps",
+                    "pricing": {"ondemand": 0.231}
+                },
+                {
+                    "type": "db.m5.large",
+                    "vCPU": 2,
+                    "memory": 8,
+                    "max_iops": 7000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.693}
+                },
+                {
+                    "type": "db.m5.xlarge",
+                    "vCPU": 4,
+                    "memory": 16,
+                    "max_iops": 10000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 1.386}
+                },
                 {
                     "type": "db.m5.2xlarge",
                     "vCPU": 8,
@@ -142,15 +262,47 @@ class RDSDatabaseSizingCalculator:
         "us-west-2": {
             "oracle-ee": [
                 {
+                    "type": "db.t3.medium",
+                    "vCPU": 2,
+                    "memory": 4,
+                    "max_iops": 2000,
+                    "network_perf": "Up to 5 Gbps",
+                    "pricing": {"ondemand": 0.148}
+                },
+                {
                     "type": "db.m5.large",
                     "vCPU": 2,
                     "memory": 8,
                     "max_iops": 7000,
                     "network_perf": "Up to 10 Gbps",
                     "pricing": {"ondemand": 0.515}
+                },
+                {
+                    "type": "db.m5.xlarge",
+                    "vCPU": 4,
+                    "memory": 16,
+                    "max_iops": 10000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 1.03}
+                },
+                {
+                    "type": "db.r5.large",
+                    "vCPU": 2,
+                    "memory": 16,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.65}
                 }
             ],
             "aurora-postgresql": [
+                {
+                    "type": "db.t3.medium",
+                    "vCPU": 2,
+                    "memory": 4,
+                    "max_iops": 2000,
+                    "network_perf": "Up to 5 Gbps",
+                    "pricing": {"ondemand": 0.089}
+                },
                 {
                     "type": "db.r5.large",
                     "vCPU": 2,
@@ -158,11 +310,27 @@ class RDSDatabaseSizingCalculator:
                     "max_iops": 15000,
                     "network_perf": "Up to 10 Gbps",
                     "pricing": {"ondemand": 0.315}
+                },
+                {
+                    "type": "db.r5.xlarge",
+                    "vCPU": 4,
+                    "memory": 32,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.63}
                 }
             ]
         },
         "eu-west-1": {
             "aurora-postgresql": [
+                {
+                    "type": "db.t3.medium",
+                    "vCPU": 2,
+                    "memory": 4,
+                    "max_iops": 2000,
+                    "network_perf": "Up to 5 Gbps",
+                    "pricing": {"ondemand": 0.092}
+                },
                 {
                     "type": "db.r5.large",
                     "vCPU": 2,
@@ -170,6 +338,14 @@ class RDSDatabaseSizingCalculator:
                     "max_iops": 15000,
                     "network_perf": "Up to 10 Gbps",
                     "pricing": {"ondemand": 0.335}
+                },
+                {
+                    "type": "db.r5.xlarge",
+                    "vCPU": 4,
+                    "memory": 32,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.67}
                 }
             ]
         }
@@ -360,7 +536,7 @@ class RDSDatabaseSizingCalculator:
         return 0
     
     def _select_instance(self, vcpus, ram, iops, env):
-        """AI-powered instance selection with serverless support"""
+        """Enhanced instance selection with proper sizing for each environment"""
         engine = self.inputs["engine"]
         region = self.inputs["region"]
         deployment_model = self.inputs["deployment_model"]
@@ -382,38 +558,167 @@ class RDSDatabaseSizingCalculator:
         engine_data = region_data.get(engine)
         
         if not engine_data:
-            # Try to find any matching engine
+            # Try to find any matching engine or create fallback instances
             for r in self.INSTANCE_DB.values():
                 if engine in r:
                     engine_data = r[engine]
                     break
+            
             if not engine_data:
-                raise ValueError(f"No instances found for engine '{engine}' in any region")
+                # Create fallback instances for missing engines
+                engine_data = self._create_fallback_instances()
         
-        # Relaxed candidate filtering
-        candidates = [
-            inst for inst in engine_data 
-            if inst["vCPU"] >= vcpus * 0.8  # Allow 20% underprovisioning
-            and inst["memory"] >= ram * 0.8
-            # Remove strict IOPS constraint
-        ]
+        # Enhanced candidate filtering - find instances that can meet the requirements
+        suitable_candidates = []
+        for inst in engine_data:
+            # Check if instance can meet requirements (with some tolerance)
+            cpu_ok = inst["vCPU"] >= vcpus
+            ram_ok = inst["memory"] >= ram
+            
+            if cpu_ok and ram_ok:
+                suitable_candidates.append(inst)
         
-        if not candidates:
-            # Find closest match by performance score
-            def performance_score(inst):
-                cpu_match = 1 - abs(inst["vCPU"] - vcpus) / max(vcpus, 1)
-                ram_match = 1 - abs(inst["memory"] - ram) / max(ram, 1)
-                return (cpu_match * 0.6) + (ram_match * 0.4)
+        # If no perfect matches, find the best available instances
+        if not suitable_candidates:
+            # For smaller environments, allow some underprovisioning
+            tolerance = 0.9 if env in ["DEV", "QA"] else 0.95
+            
+            for inst in engine_data:
+                cpu_ok = inst["vCPU"] >= vcpus * tolerance
+                ram_ok = inst["memory"] >= ram * tolerance
                 
-            return max(engine_data, key=performance_score)
+                if cpu_ok and ram_ok:
+                    suitable_candidates.append(inst)
         
-        # Cost-performance scoring with relaxed weights
-        def instance_score(instance):
-            cost = instance["pricing"]["ondemand"]
-            perf = (instance["vCPU"] * 0.5) + (instance["memory"] * 0.5)
-            return perf / cost  # Higher value = better value
+        # If still no candidates, pick the closest match
+        if not suitable_candidates:
+            def sizing_score(inst):
+                # Calculate how well this instance fits the requirements
+                cpu_ratio = min(inst["vCPU"] / max(vcpus, 1), 2.0)  # Cap at 2x to avoid oversizing
+                ram_ratio = min(inst["memory"] / max(ram, 1), 2.0)
+                
+                # Prefer instances that are slightly larger rather than smaller
+                cpu_penalty = max(0, vcpus - inst["vCPU"]) * 2  # Heavy penalty for undersizing
+                ram_penalty = max(0, ram - inst["memory"]) * 2
+                
+                return (cpu_ratio + ram_ratio) - (cpu_penalty + ram_penalty)
+            
+            return max(engine_data, key=sizing_score)
         
-        return min(candidates, key=lambda x: x["pricing"]["ondemand"])  # Select cheapest valid option
+        # Select the most cost-effective instance from suitable candidates
+        # For production, prefer performance; for dev/test, prefer cost
+        if env == "PROD":
+            # For production, select instance with best performance headroom
+            def prod_score(inst):
+                cpu_headroom = inst["vCPU"] / max(vcpus, 1)
+                ram_headroom = inst["memory"] / max(ram, 1)
+                cost = inst["pricing"]["ondemand"]
+                
+                # Balance performance headroom with cost (prefer some headroom for PROD)
+                headroom_score = min(cpu_headroom + ram_headroom, 3.0)  # Cap headroom benefit
+                cost_penalty = cost / 100  # Small cost penalty
+                
+                return headroom_score - cost_penalty
+            
+            return max(suitable_candidates, key=prod_score)
+        else:
+            # For non-production, prioritize cost efficiency
+            def cost_score(inst):
+                cost = inst["pricing"]["ondemand"]
+                cpu_waste = max(0, inst["vCPU"] - vcpus)
+                ram_waste = max(0, inst["memory"] - ram)
+                
+                # Penalize both cost and resource waste
+                waste_penalty = (cpu_waste * 0.1) + (ram_waste * 0.05)
+                
+                return 1000 / (cost + waste_penalty + 1)  # Higher score = better value
+            
+            return max(suitable_candidates, key=cost_score)
+    
+    def _create_fallback_instances(self):
+        """Create fallback instance types when specific engine data is missing"""
+        return [
+            {
+                "type": "db.t3.micro",
+                "vCPU": 2,
+                "memory": 1,
+                "max_iops": 2000,
+                "network_perf": "Up to 5 Gbps",
+                "pricing": {"ondemand": 0.017}
+            },
+            {
+                "type": "db.t3.small",
+                "vCPU": 2,
+                "memory": 2,
+                "max_iops": 2000,
+                "network_perf": "Up to 5 Gbps",
+                "pricing": {"ondemand": 0.034}
+            },
+            {
+                "type": "db.t3.medium",
+                "vCPU": 2,
+                "memory": 4,
+                "max_iops": 2000,
+                "network_perf": "Up to 5 Gbps",
+                "pricing": {"ondemand": 0.068}
+            },
+            {
+                "type": "db.m5.large",
+                "vCPU": 2,
+                "memory": 8,
+                "max_iops": 7000,
+                "network_perf": "Up to 10 Gbps",
+                "pricing": {"ondemand": 0.192}
+            },
+            {
+                "type": "db.m5.xlarge",
+                "vCPU": 4,
+                "memory": 16,
+                "max_iops": 10000,
+                "network_perf": "Up to 10 Gbps",
+                "pricing": {"ondemand": 0.384}
+            },
+            {
+                "type": "db.m5.2xlarge",
+                "vCPU": 8,
+                "memory": 32,
+                "max_iops": 15000,
+                "network_perf": "Up to 10 Gbps",
+                "pricing": {"ondemand": 0.768}
+            },
+            {
+                "type": "db.m5.4xlarge",
+                "vCPU": 16,
+                "memory": 64,
+                "max_iops": 18750,
+                "network_perf": "Up to 10 Gbps",
+                "pricing": {"ondemand": 1.536}
+            },
+            {
+                "type": "db.r5.large",
+                "vCPU": 2,
+                "memory": 16,
+                "max_iops": 15000,
+                "network_perf": "Up to 10 Gbps",
+                "pricing": {"ondemand": 0.24}
+            },
+            {
+                "type": "db.r5.xlarge",
+                "vCPU": 4,
+                "memory": 32,
+                "max_iops": 15000,
+                "network_perf": "Up to 10 Gbps",
+                "pricing": {"ondemand": 0.48}
+            },
+            {
+                "type": "db.r5.2xlarge",
+                "vCPU": 8,
+                "memory": 64,
+                "max_iops": 15000,
+                "network_perf": "Up to 10 Gbps",
+                "pricing": {"ondemand": 0.96}
+            }
+        ]
 
     def _calculate_costs(self, instance, storage, iops, env):
         """Comprehensive cost calculation for both serverless and provisioned"""
