@@ -238,13 +238,14 @@ st.markdown("""
         background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
         padding: 1rem;
         border-radius: 10px;
-        color: white;
+        color: #333;
         text-align: center;
         margin: 0.5rem 0;
     }
     .metric-value {
         font-size: 2rem;
         font-weight: bold;
+        color: #111;
     }
     .metric-label {
         font-size: 0.9rem;
@@ -262,12 +263,14 @@ st.markdown("""
         border-left: 4px solid #28a745;
         padding: 0.75rem;
         margin: 0.5rem 0;
+        color: #155724;
     }
     .status-warning {
         background: #fff3cd;
         border-left: 4px solid #ffc107;
         padding: 0.75rem;
         margin: 0.5rem 0;
+        color: #856404;
     }
     .status-error {
         background: #f8d7da;
