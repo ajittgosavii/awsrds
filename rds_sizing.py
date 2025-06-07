@@ -12,7 +12,8 @@ class RDSDatabaseSizingCalculator:
         'Single-AZ': 1,
         'Multi-AZ': 2,
         'Multi-AZ Cluster': 2.5,
-        'Aurora Global': 3
+        'Aurora Global': 3,
+        'Serverless': 0.5  # Added serverless option
     }
     
     # Storage types with performance characteristics
@@ -62,7 +63,7 @@ class RDSDatabaseSizingCalculator:
         'All Upfront': {'1yr': 0.4, '3yr': 0.55}
     }
     
-    def __init__(self):
+     def __init__(self):
         # Load instance database
         with open('instance_database.json') as f:
             self.INSTANCE_DB = json.load(f)
@@ -71,18 +72,29 @@ class RDSDatabaseSizingCalculator:
         self.pricing_data = {
             "storage": {
                 "us-east-1": {
-                    "gp2": 0.10,  # $0.10 per GB-month
+                    "gp2": 0.10,
                     "gp3": {
-                        "gb": 0.08,      # $0.08 per GB-month
-                        "iops": 0.005,   # $0.005 per provisioned IOPS-month over 3,000
-                        "throughput": 0.04  # $0.04 per MBps-month over 125
+                        "gb": 0.08,
+                        "iops": 0.005,
+                        "throughput": 0.04
                     },
-                    "io1": 0.125,  # $0.125 per GB-month
-                    "io2": 0.15    # $0.15 per GB-month
+                    "io1": 0.125,
+                    "io2": 0.15
+                },
+                "default": {
+                    "gp2": 0.11,
+                    "gp3": {
+                        "gb": 0.09,
+                        "iops": 0.006,
+                        "throughput": 0.045
+                    },
+                    "io1": 0.135,
+                    "io2": 0.16
                 }
             },
             "backup": {
-                "us-east-1": 0.05  # $0.05 per GB-month
+                "us-east-1": 0.05,
+                "default": 0.055
             }
         }
         
@@ -107,7 +119,8 @@ class RDSDatabaseSizingCalculator:
             "enable_auto_scaling": False,
             "monthly_data_transfer_gb": 100,
             "ri_term": "No Upfront",
-            "ri_duration": "1yr"
+            "ri_duration": "1yr",
+            "deployment_model": "Provisioned"  # Added deployment model
         }
         self.recommendations = {}
         self.tco_data = {}
@@ -225,101 +238,110 @@ class RDSDatabaseSizingCalculator:
             return base_iops * 1.3  # 30% buffer
     
     def _select_instance(self, vcpus, ram, iops, env):
-        """AI-powered instance selection with cost-performance optimization"""
-        # Filter candidates
+        """AI-powered instance selection with serverless support"""
         engine = self.inputs["engine"]
         region = self.inputs["region"]
+        deployment_model = self.inputs["deployment_model"]
+        
+        # Handle serverless deployment
+        if deployment_model == "Serverless":
+            serverless_candidate = {
+                "type": "db.serverless",
+                "vCPU": 0,
+                "memory": 0,
+                "max_iops": 0,
+                "network_perf": "Up to 10 Gbps",
+                "pricing": {"ondemand": 0.12}
+            }
+            return serverless_candidate
+        
+        # Get region data or fallback to us-east-1
+        region_data = self.INSTANCE_DB.get(region, self.INSTANCE_DB.get("us-east-1", {}))
+        engine_data = region_data.get(engine)
+        
+        if not engine_data:
+            # Try to find any matching engine
+            for r in self.INSTANCE_DB.values():
+                if engine in r:
+                    engine_data = r[engine]
+                    break
+            if not engine_data:
+                raise ValueError(f"No instances found for engine '{engine}' in any region")
         
         candidates = [
-            inst for inst in self.INSTANCE_DB[region][engine] 
+            inst for inst in engine_data 
             if inst["vCPU"] >= vcpus 
             and inst["memory"] >= ram
-            and inst["max_iops"] >= iops
-            and inst["network_perf"] >= self.inputs["peak_throughput_mbps"] / 1000  # Gbps
+            and inst.get("max_iops", float('inf')) >= iops
+            and inst["network_perf"] >= self.inputs["peak_throughput_mbps"] / 1000
         ]
         
         if not candidates:
             # Fallback to largest instance
-            return max(
-                self.INSTANCE_DB[region][engine],
-                key=lambda x: x["vCPU"]
-            )
+            return max(engine_data, key=lambda x: x["vCPU"])
         
         # Cost-performance scoring
         def instance_score(instance):
             # Weighted score: 60% cost, 30% performance, 10% newest generation
             cost = instance["pricing"]["ondemand"]
             perf = instance["vCPU"] * instance["memory"]
-            gen_factor = 1.0 if "6" in instance["type"] else 0.8  # Prefer current gen
+            gen_factor = 1.0 if "6" in instance["type"] else 0.8
             
             return (1/cost) * 0.6 + perf * 0.3 + gen_factor * 0.1
         
         return max(candidates, key=instance_score)
-    
+
     def _calculate_costs(self, instance, storage, iops, env):
-        """Comprehensive cost calculation with RI discounts and TCO analysis"""
-        # Base instance cost
-        hourly = instance["pricing"]["ondemand"]
-        monthly_instance = hourly * 24 * 30
+        """Comprehensive cost calculation with serverless support"""
+        deployment_model = self.inputs["deployment_model"]
         
-        # Apply RI discount for production
-        if env == "PROD":
-            ri_discount = self.RI_DISCOUNTS[self.inputs["ri_term"]][self.inputs["ri_duration"]]
-            monthly_instance *= (1 - ri_discount)
-        
-        # Storage cost
-        storage_type = self.inputs["storage_type"]
-        
-        # Get region pricing with fallback to us-east-1
-        region = self.inputs["region"]
-        if region not in self.pricing_data["storage"]:
-            region = "us-east-1"
-            logging.warning(f"Using default pricing for region: us-east-1")
+        # Serverless cost calculation
+        if deployment_model == "Serverless":
+            # Base serverless cost (per ACU-hour)
+            hourly = instance["pricing"]["ondemand"]
+            monthly_instance = hourly * 24 * 30
             
-        storage_pricing = self.pricing_data["storage"][region][storage_type]
-        
-        if storage_type == "gp3":
-            # $0.08/GB + $0.005/provisioned IOPS over 3,000 + $0.04/MBps over 125
-            base_cost = storage * storage_pricing["gb"]
-            iops_cost = max(0, iops - 3000) * storage_pricing["iops"]
-            throughput = min(iops * 0.256, 1000)
-            throughput_cost = max(0, throughput - 125) * storage_pricing["throughput"]
-            storage_cost = base_cost + iops_cost + throughput_cost
-        else:
-            # Simple per-GB pricing for other storage types
-            storage_cost = storage * storage_pricing
-        
-        # HA cost
-        deployment_factor = self.DEPLOYMENT_OPTIONS[self.inputs["deployment"]]
-        ha_cost = monthly_instance * (deployment_factor - 1)  # Additional instances
-        
-        # Backup cost
-        backup_rate = self.pricing_data["backup"].get(region, self.pricing_data["backup"]["us-east-1"])
-        backup_cost = storage * backup_rate * (self.inputs["backup_retention"] / 30)
-        
-        # Feature costs
-        features_cost = 0
-        if self.inputs["enable_perf_insights"]:
-            features_cost += monthly_instance * 0.1  # 10% of instance cost
-        
-        # TCO savings calculation
-        onprem_cost = self._calculate_onprem_tco()
-        cloud_cost = monthly_instance + storage_cost + ha_cost + backup_cost + features_cost
-        tco_savings = (onprem_cost - cloud_cost) / onprem_cost * 100
-        
-        return {
-            "instance": monthly_instance,
-            "storage": storage_cost,
-            "backup": backup_cost,
-            "ha": ha_cost,
-            "features": features_cost,
-            "total": monthly_instance + storage_cost + ha_cost + backup_cost + features_cost,
-            "tco_savings": tco_savings
-        }
+            # Storage cost for Aurora Serverless
+            storage_cost = storage * 0.10  # $0.10/GB-month
+            
+            # HA cost (serverless includes HA)
+            ha_cost = monthly_instance * 0.2  # 20% for HA
+            
+            # Backup cost
+            region = self.inputs["region"]
+            backup_rate = self.pricing_data["backup"].get(
+                region, 
+                self.pricing_data["backup"].get("default", 0.05)
+            )
+            backup_cost = storage * backup_rate * (self.inputs["backup_retention"] / 30)
+            
+            # Feature costs
+            features_cost = monthly_instance * 0.15  # 15% for features
+            
+            total_cost = monthly_instance + storage_cost + ha_cost + backup_cost + features_cost
+            
+            # TCO savings
+            onprem_cost = self._calculate_onprem_tco()
+            tco_savings = (onprem_cost - total_cost) / onprem_cost * 100
+            
+            return {
+                "instance": monthly_instance,
+                "storage": storage_cost,
+                "backup": backup_cost,
+                "ha": ha_cost,
+                "features": features_cost,
+                "total": total_cost,
+                "tco_savings": tco_savings
+            }
     
     def _generate_advisories(self, instance, storage, iops, env):
         """Generate expert optimization advisories"""
         advisories = []
+        deployment_model = self.inputs["deployment_model"]
+        
+        # Serverless advisory
+        if "aurora" in self.inputs["engine"] and deployment_model == "Provisioned":
+            advisories.append("ℹ️ Consider Serverless deployment for variable workloads")
         
         # High availability check
         if env == "PROD" and self.inputs["deployment"] == "Single-AZ":

@@ -17,6 +17,75 @@ class ReportGenerator:
         styles = getSampleStyleSheet()
         elements = []
         
+        def generate_excel_report(self, calculator):
+        # Create multi-sheet Excel report
+        buffer = BytesIO()
+        try:
+            import xlsxwriter
+        except ImportError:
+            # Fallback to openpyxl if xlsxwriter not available
+            from openpyxl import Workbook
+            wb = Workbook()
+            # Recommendations sheet
+            ws1 = wb.active
+            ws1.title = "Recommendations"
+            # ... (populate using openpyxl)
+            wb.save(buffer)
+        else:
+            # Use xlsxwriter if available
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                # Recommendations sheet
+                rec_data = []
+                for env in calculator.recommendations:
+                    rec = calculator.recommendations[env]
+                    rec_data.append({
+                        "Environment": env,
+                        "Instance Type": rec.get("instance_type", "N/A"),
+                        "vCPUs": rec.get("vCPUs", 0),
+                        "RAM (GB)": rec.get("RAM_GB", 0),
+                        "Storage (GB)": rec.get("storage_GB", 0),
+                        "Monthly Cost": rec.get("total_cost", 0)
+                    })
+                
+                pd.DataFrame(rec_data).to_excel(
+                    writer, 
+                    sheet_name="Recommendations", 
+                    index=False
+                )
+                
+                # TCO Analysis
+                if calculator.tco_data:
+                    pd.DataFrame(calculator.tco_data).to_excel(
+                        writer, 
+                        sheet_name="TCO Analysis", 
+                        index=False
+                    )
+                
+                # Risk Assessment
+                risk_data = {
+                    "Risk Area": ["HA/DR", "Security", "Performance", "Compliance", "Cost Management"],
+                    "Likelihood": ["Medium", "Low", "High", "Medium", "High"],
+                    "Impact": ["High", "Critical", "Medium", "High", "Medium"],
+                    "Mitigation Strategy": [
+                        "Implement Multi-AZ with read replicas",
+                        "Enable encryption and IAM authentication",
+                        "Enable Performance Insights and set monitoring",
+                        "Implement required controls for compliance frameworks",
+                        "Use Reserved Instances and storage tiering"
+                    ]
+                }
+                pd.DataFrame(risk_data).to_excel(
+                    writer, 
+                    sheet_name="Risk Assessment", 
+                    index=False
+                )
+        
+        buffer.seek(0)
+        return buffer.getvalue()
+
+
+
+
         # Title
         title_style = ParagraphStyle(
             name="Title",

@@ -146,16 +146,34 @@ with st.sidebar:
         enable_perf_insights = st.checkbox("Performance Insights", True)
         compliance_framework = st.multiselect("Compliance Framework", 
                                             ["HIPAA", "PCI-DSS", "GDPR", "SOC2"])
+    with st.sidebar:
+    st.header(":cloud: AWS Configuration")
+    region = st.selectbox("AWS Region", ["us-east-1", "us-west-1", "us-west-2", "eu-west-1", "ap-southeast-1"], index=0)
+    
+    st.header(":gear: Database Settings")
+    engine = st.selectbox("Database Engine", calculator.ENGINES, index=0)
+    
+    # Add deployment model selection for Aurora
+    if engine.startswith('aurora'):
+        deployment_model = st.radio("Deployment Model", ["Provisioned", "Serverless"])
+    else:
+        deployment_model = "Provisioned"
+    
+    deployment = st.selectbox("Deployment Type", list(calculator.DEPLOYMENT_OPTIONS.keys()), index=1)
+    storage_type = st.selectbox("Storage Type", list(calculator.STORAGE_TYPES.keys()), index=1)
     
     st.header(":moneybag: Financials")
     years = st.slider("Projection Years", 1, 5, 3)
     data_transfer = st.number_input("Monthly Data Transfer (GB)", min_value=0, value=100)
+
+    
 
 # Update calculator inputs
 calculator.inputs.update({
     "region": region,
     "engine": engine,
     "deployment": deployment,
+    "deployment_model": deployment_model,  # Added deployment model
     "storage_type": storage_type,
     "on_prem_cores": cores,
     "peak_cpu_percent": cpu_util,

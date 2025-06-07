@@ -32,6 +32,80 @@
         "pricing": {
           "ondemand": 0.285
         }
+      },
+      {
+        "type": "db.serverless",
+        "vCPU": 0,
+        "memory": 0,
+        "max_iops": 0,
+        "network_perf": "Up to 10 Gbps",
+        "pricing": {
+          "ondemand": 0.12
+        }
+      }
+    ],
+    "postgres": [
+      {
+        "type": "db.m5.xlarge",
+        "vCPU": 4,
+        "memory": 16,
+        "max_iops": 10000,
+        "network_perf": "Up to 10 Gbps",
+        "pricing": {
+          "ondemand": 0.228
+        }
+      }
+    ],
+    "sqlserver": [
+      {
+        "type": "db.m5.2xlarge",
+        "vCPU": 8,
+        "memory": 32,
+        "max_iops": 15000,
+        "network_perf": "Up to 10 Gbps",
+        "pricing": {
+          "ondemand": 1.56
+        }
+      }
+    ]
+  },
+  "us-west-2": {
+    "oracle-ee": [
+      {
+        "type": "db.m5.large",
+        "vCPU": 2,
+        "memory": 8,
+        "max_iops": 7000,
+        "network_perf": "Up to 10 Gbps",
+        "pricing": {
+          "ondemand": 0.515
+        }
+      }
+    ],
+    "aurora-postgresql": [
+      {
+        "type": "db.r5.large",
+        "vCPU": 2,
+        "memory": 16,
+        "max_iops": 15000,
+        "network_perf": "Up to 10 Gbps",
+        "pricing": {
+          "ondemand": 0.315
+        }
+      }
+    ]
+  },
+  "eu-west-1": {
+    "aurora-postgresql": [
+      {
+        "type": "db.r5.large",
+        "vCPU": 2,
+        "memory": 16,
+        "max_iops": 15000,
+        "network_perf": "Up to 10 Gbps",
+        "pricing": {
+          "ondemand": 0.335
+        }
       }
     ]
   }
