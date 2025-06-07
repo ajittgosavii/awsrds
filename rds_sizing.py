@@ -64,9 +64,9 @@ class RDSDatabaseSizingCalculator:
     }
     
     def __init__(self):
-          # Replace static pricing with dynamic client
-            from aws_pricing import AWSPricing
-            self.pricing_client = AWSPricing()        
+        # Replace static pricing with dynamic client
+        from aws_pricing import AWSPricing
+        self.pricing_client = AWSPricing()
         
         self.inputs = {
             "region": "us-east-1",
@@ -261,30 +261,30 @@ class RDSDatabaseSizingCalculator:
             if not engine_data:
                 raise ValueError(f"No instances found for engine '{engine}' in any region")
         
-       # Relaxed candidate filtering
-    candidates = [
-        inst for inst in engine_data 
-        if inst["vCPU"] >= vcpus * 0.8  # Allow 20% underprovisioning
-        and inst["memory"] >= ram * 0.8
-        # Remove strict IOPS constraint
-    ]
-    
-    if not candidates:
-        # Find closest match by performance score
-        def performance_score(inst):
-            cpu_match = 1 - abs(inst["vCPU"] - vcpus) / max(vcpus, 1)
-            ram_match = 1 - abs(inst["memory"] - ram) / max(ram, 1)
-            return (cpu_match * 0.6) + (ram_match * 0.4)
-            
-        return max(engine_data, key=performance_score)
-    
-    # Cost-performance scoring with relaxed weights
-    def instance_score(instance):
-        cost = instance["pricing"]["ondemand"]
-        perf = (instance["vCPU"] * 0.5) + (instance["memory"] * 0.5)
-        return perf / cost  # Higher value = better value
-    
-    return min(candidates, key=lambda x: x["pricing"]["ondemand"])  # Select cheapest valid option
+        # Relaxed candidate filtering
+        candidates = [
+            inst for inst in engine_data 
+            if inst["vCPU"] >= vcpus * 0.8  # Allow 20% underprovisioning
+            and inst["memory"] >= ram * 0.8
+            # Remove strict IOPS constraint
+        ]
+        
+        if not candidates:
+            # Find closest match by performance score
+            def performance_score(inst):
+                cpu_match = 1 - abs(inst["vCPU"] - vcpus) / max(vcpus, 1)
+                ram_match = 1 - abs(inst["memory"] - ram) / max(ram, 1)
+                return (cpu_match * 0.6) + (ram_match * 0.4)
+                
+            return max(engine_data, key=performance_score)
+        
+        # Cost-performance scoring with relaxed weights
+        def instance_score(instance):
+            cost = instance["pricing"]["ondemand"]
+            perf = (instance["vCPU"] * 0.5) + (instance["memory"] * 0.5)
+            return perf / cost  # Higher value = better value
+        
+        return min(candidates, key=lambda x: x["pricing"]["ondemand"])  # Select cheapest valid option
 
     def _calculate_costs(self, instance, storage, iops, env):
         """Comprehensive cost calculation for both serverless and provisioned"""

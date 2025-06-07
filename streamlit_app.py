@@ -248,13 +248,13 @@ if st.button("Generate Sizing Recommendations", type="primary", use_container_wi
                 <div class="risk-cell" style="background-color:#FDE68A;grid-column:3;grid-row:1">High Impact<br>Low Likelihood</div>
                 <div class="risk-cell" style="background-color:#FCD34D;grid-column:4;grid-row:1">Very High Impact<br>Low Likelihood</div>
                 <div class="risk-cell" style="background-color:#FCA5A5;grid-column:5;grid-row:1">Critical Impact<br>Low Likelihood</div>
-    
+
                 <div class="risk-cell" style="background-color:#A7F3D0;grid-column:1;grid-row:2">Low Impact<br>Medium Likelihood</div>
                 <div class="risk-cell" style="background-color:#FDE68A;grid-column:2;grid-row:2">Medium Impact<br>Medium Likelihood</div>
                 <div class="risk-cell" style="background-color:#FCD34D;grid-column:3;grid-row:2">High Impact<br>Medium Likelihood</div>
                 <div class="risk-cell" style="background-color:#FCA5A5;grid-column:4;grid-row:2">Very High Impact<br>Medium Likelihood</div>
                 <div class="risk-cell" style="background-color:#EF4444;grid-column:5;grid-row:2">Critical Impact<br>Medium Likelihood</div>
-    
+
                 <div class="risk-cell" style="background-color:#FDE68A;grid-column:1;grid-row:3">Low Impact<br>High Likelihood</div>
                 <div class="risk-cell" style="background-color:#FCD34D;grid-column:2;grid-row:3">Medium Impact<br>High Likelihood</div>
                 <div class="risk-cell" style="background-color:#FCA5A5;grid-column:3;grid-row:3">High Impact<br>High Likelihood</div>
