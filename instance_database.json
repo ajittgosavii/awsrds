@@ -1,0 +1,38 @@
+{
+  "us-east-1": {
+    "oracle-ee": [
+      {
+        "type": "db.m5.large",
+        "vCPU": 2,
+        "memory": 8,
+        "max_iops": 7000,
+        "network_perf": "Up to 10 Gbps",
+        "pricing": {
+          "ondemand": 0.475
+        }
+      },
+      {
+        "type": "db.r5.2xlarge",
+        "vCPU": 8,
+        "memory": 64,
+        "max_iops": 35000,
+        "network_perf": "Up to 10 Gbps",
+        "pricing": {
+          "ondemand": 1.92
+        }
+      }
+    ],
+    "aurora-postgresql": [
+      {
+        "type": "db.r5.large",
+        "vCPU": 2,
+        "memory": 16,
+        "max_iops": 15000,
+        "network_perf": "Up to 10 Gbps",
+        "pricing": {
+          "ondemand": 0.285
+        }
+      }
+    ]
+  }
+}
