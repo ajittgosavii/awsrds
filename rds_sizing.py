@@ -63,7 +63,7 @@ class RDSDatabaseSizingCalculator:
         'All Upfront': {'1yr': 0.4, '3yr': 0.55}
     }
     
-     def __init__(self):
+    def __init__(self):
         # Load instance database
         with open('instance_database.json') as f:
             self.INSTANCE_DB = json.load(f)
