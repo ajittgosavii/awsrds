@@ -28,12 +28,15 @@ class DemoRDSSizingCalculator:
         self.recommendations = {}
         self.inputs = {}
         
-    def _check_aws_credentials(self):
+    def refresh_aws_credentials(self):
+        """Refresh AWS credentials and return status"""
         try:
             session = boto3.Session()
             credentials = session.get_credentials()
-            return credentials is not None
-        except:
+            self.aws_available = credentials is not None
+            return self.aws_available
+        except Exception as e:
+            self.aws_available = False
             return False
     
     def _get_instance_data(self, engine, region):
@@ -308,8 +311,18 @@ with col1:
 
 with col2:
     if st.button("🔄 Refresh AWS Status"):
-        st.cache_resource.clear()
-        st.rerun()
+        # Show spinner while checking credentials
+        with st.spinner("Checking AWS credentials..."):
+            success = calculator.refresh_aws_credentials()
+            
+        if success:
+            st.success("✅ AWS credentials verified successfully!")
+            st.rerun()
+        else:
+            st.error("❌ Failed to find valid AWS credentials. Using fallback data.")
+            # Wait a moment so user can see the message
+            time.sleep(2)
+            st.rerun()
 
 # Sidebar Configuration
 with st.sidebar:
