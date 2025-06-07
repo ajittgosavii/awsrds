@@ -229,6 +229,7 @@ st.set_page_config(
 )
 
 # Custom CSS
+
 st.markdown("""
 <style>
     .main > div {
@@ -244,12 +245,12 @@ st.markdown("""
     .metric-value {
         font-size: 2rem;
         font-weight: bold;
-        color: #000000 !important;
+        color: #111;  /* Changed to almost black */
     }
     .metric-label {
         font-size: 0.9rem;
-        color: #000000 !important;
-        opacity: 0.8;
+        opacity: 0.9;
+        color: #eee;  /* Light gray for labels */
     }
     .advisory-box {
         background: #fff3cd;
@@ -277,6 +278,11 @@ st.markdown("""
         border-left: 4px solid #dc3545;
         padding: 0.75rem;
         margin: 0.5rem 0;
+    }
+    /* Add specific styling for cost values */
+    .metric-cost {
+        color: #111 !important;  /* Force black for cost values */
+        font-size: 2.2rem;       /* Slightly larger for emphasis */
     }
 </style>
 """, unsafe_allow_html=True)
@@ -411,7 +417,7 @@ if 'results' in st.session_state:
         with col3:
             st.markdown(f"""
             <div class="metric-container">
-                <div class="metric-value">${prod_result['total_cost']:,.0f}</div>
+                <div class="metric-value metric-cost">${prod_result['total_cost']:,.0f}</div>
                 <div class="metric-label">Monthly Cost</div>
             </div>
             """, unsafe_allow_html=True)
