@@ -27,7 +27,17 @@ class DemoRDSSizingCalculator:
         self.aws_available = self._check_aws_credentials()
         self.recommendations = {}
         self.inputs = {}
-        
+    
+    # Added missing method
+    def _check_aws_credentials(self):
+        """Check if AWS credentials are available"""
+        try:
+            session = boto3.Session()
+            credentials = session.get_credentials()
+            return credentials is not None
+        except Exception:
+            return False
+            
     def refresh_aws_credentials(self):
         """Refresh AWS credentials and return status"""
         try:
@@ -38,6 +48,8 @@ class DemoRDSSizingCalculator:
         except Exception as e:
             self.aws_available = False
             return False
+            
+    # ... rest of the class remains unchanged ...
     
     def _get_instance_data(self, engine, region):
         """Get instance data - real-time if available, fallback otherwise"""
