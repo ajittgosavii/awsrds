@@ -240,7 +240,6 @@ if st.button("Generate Sizing Recommendations", type="primary", use_container_wi
             st.plotly_chart(fig, use_container_width=True)
             
             # Risk Assessment
-            # Replace the risk matrix section with this corrected version
             st.subheader(":triangular_flag_on_post: Risk Assessment Matrix")
             st.markdown("""
                 <div class="risk-matrix">

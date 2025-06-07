@@ -168,7 +168,12 @@ class RDSDatabaseSizingCalculator:
         # Environment factor
         env_factor = self.ENV_PROFILES[env]["cpu_ram"]
         
-        return max(4, math.ceil(base_ram * engine_factors[self.inputs["engine"]] * env_factor))
+        calculated_ram = max(4, math.ceil(base_ram * engine_factors[self.inputs["engine"]] * env_factor))
+        
+        # Ensure non-PROD environments have at least 4GB RAM
+        if env != "PROD":
+            return max(4, calculated_ram)
+        return calculated_ram
         
     def calculate_requirements(self, env):
         """Calculate requirements with enhanced optimization logic"""
@@ -213,32 +218,9 @@ class RDSDatabaseSizingCalculator:
         }
     
     def _calculate_cpu(self, env):
-        # Add minimum vCPU constraint for non-PROD environments
+        """Enhanced CPU calculation with workload profiles"""
         base_cpu = self.inputs["on_prem_cores"] * (self.inputs["peak_cpu_percent"] / 100)
-        # ... existing factors ...
-    
-        calculated_cpu = max(2, math.ceil(base_cpu * engine_factors[self.inputs["engine"]] * env_factor))
-    
-        # Ensure non-PROD environments have at least 2 vCPUs
-        if env != "PROD":
-        return max(2, calculated_cpu)
-        return calculated_cpu
-
-    def _calculate_ram(self, env):
-    """Enhanced RAM calculation with workload profiles"""
-         # Add minimum RAM constraint for non-PROD environments
-        base_ram = self.inputs["on_prem_ram_gb"] * (self.inputs["peak_ram_percent"] / 100)
-    
-        # ... existing factors ...
-    
-        calculated_ram = max(4, math.ceil(base_ram * engine_factors[self.inputs["engine"]] * env_factor))
-    
-        # Ensure non-PROD environments have at least 4GB RAM
-        if env != "PROD":
-        return max(4, calculated_ram)
-        return calculated_ram
-
-
+        
         # Engine-specific multipliers
         engine_factors = {
             "oracle-ee": 0.9,
@@ -252,8 +234,13 @@ class RDSDatabaseSizingCalculator:
         # Environment factor
         env_factor = self.ENV_PROFILES[env]["cpu_ram"]
         
-        return max(2, math.ceil(base_cpu * engine_factors[self.inputs["engine"]] * env_factor))
-    
+        calculated_cpu = max(2, math.ceil(base_cpu * engine_factors[self.inputs["engine"]] * env_factor))
+        
+        # Ensure non-PROD environments have at least 2 vCPUs
+        if env != "PROD":
+            return max(2, calculated_cpu)
+        return calculated_cpu
+
     def _calculate_storage(self, env):
         """Storage with compression estimation and growth projection"""
         growth_factor = (1 + self.inputs["storage_growth_rate"]) ** self.inputs["years"]
@@ -335,23 +322,22 @@ class RDSDatabaseSizingCalculator:
             if inst["vCPU"] >= vcpus 
             and inst["memory"] >= ram
             and inst.get("max_iops", float('inf')) >= iops
-            and inst["network_perf"] >= self.inputs["peak_throughput_mbps"] / 1000
         ]
         
-        # Add this fallback for when no candidates match
-            if not candidates:
-        # Find any instance that meets CPU requirements
-             fallback_candidates = [
-            inst for inst in engine_data 
-            if inst["vCPU"] >= vcpus
-        ]
-        
-        if fallback_candidates:
-            # Select smallest instance that meets CPU requirements
-            return min(fallback_candidates, key=lambda x: x["vCPU"])
-        else:
-            # Return first available instance as last resort
-            return engine_data[0] if engine_data else None
+        # Fallback for when no candidates match
+        if not candidates:
+            # Find any instance that meets CPU requirements
+            fallback_candidates = [
+                inst for inst in engine_data 
+                if inst["vCPU"] >= vcpus
+            ]
+            
+            if fallback_candidates:
+                # Select smallest instance that meets CPU requirements
+                return min(fallback_candidates, key=lambda x: x["vCPU"])
+            else:
+                # Return first available instance as last resort
+                return engine_data[0] if engine_data else None
         
         # Cost-performance scoring
         def instance_score(instance):
