@@ -54,7 +54,16 @@ class AWSPricing:
                         terms = product['terms']['OnDemand']
                         price_dim = next(iter(terms.values()))['priceDimensions']
                         price = next(iter(price_dim.values()))['pricePerUnit']['USD']
-                        prices[instance_type] = float(price)
+                        
+                        # Extract additional attributes
+                        attributes = product['product']['attributes']
+                        instance_data = {
+                            "type": attributes.get('instanceType'),
+                            "vcpu": int(attributes.get('vcpu', '0')),
+                            "memory": float(attributes.get('memory', '0 GiB').split()[0]),
+                            "price": float(price)
+                        }
+                        prices[instance_type] = instance_data  # Store full data
                 
                 next_token = response.get('NextToken')
                 if not next_token:
@@ -68,20 +77,6 @@ class AWSPricing:
         except ClientError as e:
             print(f"Error fetching prices: {e}")
             return {}
-        for price_item in response['PriceList']:
-        product = json.loads(price_item)
-        attributes = product['product']['attributes']
-        
-        # Extract additional attributes
-        instance_data = {
-            "type": attributes.get('instanceType'),
-            "vcpu": int(attributes.get('vcpu', '0')),
-            "memory": float(attributes.get('memory', '0 GiB').split()[0]),
-            "price": float(price)
-        }
-        prices[instance_type] = instance_data  # Store full data
-
-
     
     def get_ebs_pricing(self, region):
         # Simplified EBS pricing

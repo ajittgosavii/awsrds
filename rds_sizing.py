@@ -63,11 +63,140 @@ class RDSDatabaseSizingCalculator:
         'All Upfront': {'1yr': 0.4, '3yr': 0.55}
     }
     
+    # Static instance database from JSON file
+    INSTANCE_DB = {
+        "us-east-1": {
+            "oracle-ee": [
+                {
+                    "type": "db.m5.large",
+                    "vCPU": 2,
+                    "memory": 8,
+                    "max_iops": 7000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.475}
+                },
+                {
+                    "type": "db.r5.2xlarge",
+                    "vCPU": 8,
+                    "memory": 64,
+                    "max_iops": 35000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 1.92}
+                },
+                {
+                    "type": "db.m5.xlarge",
+                    "vCPU": 4,
+                    "memory": 16,
+                    "max_iops": 10000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.95}
+                },
+                {
+                    "type": "db.m5.2xlarge",
+                    "vCPU": 8,
+                    "memory": 32,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 1.90}
+                }
+            ],
+            "aurora-postgresql": [
+                {
+                    "type": "db.r5.large",
+                    "vCPU": 2,
+                    "memory": 16,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.285}
+                },
+                {
+                    "type": "db.serverless",
+                    "vCPU": 0,
+                    "memory": 0,
+                    "max_iops": 0,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.12}
+                }
+            ],
+            "postgres": [
+                {
+                    "type": "db.m5.xlarge",
+                    "vCPU": 4,
+                    "memory": 16,
+                    "max_iops": 10000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.228}
+                }
+            ],
+            "sqlserver": [
+                {
+                    "type": "db.m5.2xlarge",
+                    "vCPU": 8,
+                    "memory": 32,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 1.56}
+                }
+            ]
+        },
+        "us-west-2": {
+            "oracle-ee": [
+                {
+                    "type": "db.m5.large",
+                    "vCPU": 2,
+                    "memory": 8,
+                    "max_iops": 7000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.515}
+                }
+            ],
+            "aurora-postgresql": [
+                {
+                    "type": "db.r5.large",
+                    "vCPU": 2,
+                    "memory": 16,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.315}
+                }
+            ]
+        },
+        "eu-west-1": {
+            "aurora-postgresql": [
+                {
+                    "type": "db.r5.large",
+                    "vCPU": 2,
+                    "memory": 16,
+                    "max_iops": 15000,
+                    "network_perf": "Up to 10 Gbps",
+                    "pricing": {"ondemand": 0.335}
+                }
+            ]
+        }
+    }
+    
+    # Static pricing data
+    pricing_data = {
+        "storage": {
+            "default": {
+                "gp2": 0.10,
+                "gp3": {"gb": 0.08, "iops": 0.005, "throughput": 0.04},
+                "io1": {"gb": 0.125, "iops": 0.065},
+                "io2": {"gb": 0.125, "iops": 0.065}
+            }
+        },
+        "backup": {"default": 0.095},
+        "data_transfer": {"default": 0.09},
+        "serverless": {
+            "default": {
+                "aurora-postgresql": {"acu": 0.12, "storage": 0.10},
+                "aurora-mysql": {"acu": 0.12, "storage": 0.10}
+            }
+        }
+    }
+    
     def __init__(self):
-        # Replace static pricing with dynamic client
-        from aws_pricing import AWSPricing
-        self.pricing_client = AWSPricing()
-        
+        # Use static data instead of AWS API for now
         self.inputs = {
             "region": "us-east-1",
             "engine": "oracle-ee",

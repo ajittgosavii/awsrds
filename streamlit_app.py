@@ -2,13 +2,15 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from rds_sizing import RDSDatabaseSizingCalculator
+from report_generator import ReportGenerator
 import time
+import traceback
 
 # Configure enterprise-grade UI
 st.set_page_config(
     page_title="Enterprise RDS/Aurora Sizing",
     layout="wide",
-    page_icon=":bar_chart:"
+    page_icon="📊"
 )
 
 # Custom CSS for professional styling
@@ -96,10 +98,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Initialize calculator
-calculator = RDSDatabaseSizingCalculator()
+try:
+    calculator = RDSDatabaseSizingCalculator()
+    report_generator = ReportGenerator()
+except Exception as e:
+    st.error(f"Error initializing calculator: {str(e)}")
+    st.stop()
 
 # App header
-st.title("Enterprise AWS RDS & Aurora Sizing Tool")
+st.title("🚀 Enterprise AWS RDS & Aurora Sizing Tool")
 st.markdown("""
 **Comprehensive migration planning for Oracle, PostgreSQL, Aurora with TCO analysis and optimization recommendations**  
 *Enterprise-grade solution with real-time AWS pricing and risk assessment*
@@ -107,10 +114,10 @@ st.markdown("""
 
 # Sidebar configuration
 with st.sidebar:
-    st.header(":cloud: AWS Configuration")
+    st.header("☁️ AWS Configuration")
     region = st.selectbox("AWS Region", ["us-east-1", "us-west-1", "us-west-2", "eu-west-1", "ap-southeast-1"], index=0)
     
-    st.header(":gear: Database Settings")
+    st.header("⚙️ Database Settings")
     engine = st.selectbox("Database Engine", calculator.ENGINES, index=0)
     
     # Deployment model selection for supported engines
@@ -123,7 +130,7 @@ with st.sidebar:
     deployment = st.selectbox("Deployment Type", list(calculator.DEPLOYMENT_OPTIONS.keys()), index=1)
     storage_type = st.selectbox("Storage Type", list(calculator.STORAGE_TYPES.keys()), index=1)
     
-    st.header(":chart_with_upwards_trend: Workload Profile")
+    st.header("📈 Workload Profile")
     with st.expander("Compute Resources", expanded=True):
         cores = st.number_input("CPU Cores", min_value=1, value=16)
         cpu_util = st.slider("Peak CPU Utilization (%)", 1, 100, 65)
@@ -148,7 +155,7 @@ with st.sidebar:
         enable_encryption = st.checkbox("Encryption at Rest", True)
         enable_perf_insights = st.checkbox("Performance Insights", True)
     
-    st.header(":moneybag: Financials")
+    st.header("💰 Financials")
     years = st.slider("Projection Years", 1, 5, 3)
     data_transfer = st.number_input("Monthly Data Transfer (GB)", min_value=0, value=100)
 
@@ -178,17 +185,53 @@ calculator.inputs.update({
 })
 
 # Main dashboard
-if st.button("Generate Sizing Recommendations", type="primary", use_container_width=True):
+col1, col2, col3 = st.columns([2, 1, 1])
+
+with col1:
+    generate_btn = st.button("🚀 Generate Sizing Recommendations", type="primary", use_container_width=True)
+
+with col2:
+    download_excel = st.button("📊 Download Excel", use_container_width=True)
+
+with col3:
+    download_pdf = st.button("📄 Download PDF", use_container_width=True)
+
+if generate_btn:
     start_time = time.time()
     
     with st.spinner("🚀 Generating enterprise-grade recommendations..."):
         try:
             # Generate recommendations
             results = calculator.generate_all_recommendations()
-            df = pd.DataFrame.from_dict(results, orient='index')
+            
+            # Check if we have valid results
+            valid_results = {k: v for k, v in results.items() if "error" not in v}
+            if not valid_results:
+                st.error("❌ No valid recommendations could be generated. Please check your input parameters.")
+                for env, result in results.items():
+                    if "error" in result:
+                        st.error(f"Error in {env}: {result['error']}")
+                st.stop()
+            
+            # Store results in session state for download buttons
+            st.session_state['results'] = results
+            st.session_state['calculator'] = calculator
+            
+            # Create DataFrame for display
+            df_data = []
+            for env, rec in valid_results.items():
+                df_data.append({
+                    'Environment': env,
+                    'Instance Type': rec['instance_type'],
+                    'vCPUs': rec['vCPUs'],
+                    'RAM (GB)': rec['RAM_GB'],
+                    'Storage (GB)': rec['storage_GB'],
+                    'Monthly Cost': rec['total_cost']
+                })
+            df = pd.DataFrame(df_data)
             
             # Display summary metrics
-            st.subheader(":trophy: Recommendation Summary")
+            st.subheader("🏆 Recommendation Summary")
             prod = results["PROD"]
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -201,11 +244,11 @@ if st.button("Generate Sizing Recommendations", type="primary", use_container_wi
                 st.markdown(f'<div class="metric-card"><div class="metric-title">TCO Savings</div><div class="metric-value">{prod["tco_savings"]:,.1f}%</div></div>', unsafe_allow_html=True)
             
             # Detailed recommendations
-            st.subheader(":clipboard: Environment-Specific Recommendations")
+            st.subheader("📋 Environment-Specific Recommendations")
             st.dataframe(
-                df[["instance_type", "vCPUs", "RAM_GB", "storage_GB", "total_cost"]],
+                df.set_index('Environment'),
                 column_config={
-                    "total_cost": st.column_config.NumberColumn(
+                    "Monthly Cost": st.column_config.NumberColumn(
                         "Monthly Cost",
                         format="$%.2f"
                     )
@@ -214,57 +257,40 @@ if st.button("Generate Sizing Recommendations", type="primary", use_container_wi
             )
             
             # Advisories
-            st.subheader(":warning: Optimization Advisories")
+            st.subheader("⚠️ Optimization Advisories")
+            advisory_found = False
             for env in results:
                 if "error" not in results[env] and results[env]["advisories"]:
+                    advisory_found = True
                     st.markdown(f"**{env} Environment**")
                     for advisory in results[env]["advisories"]:
                         st.markdown(f'<div class="advisory-card">{advisory}</div>', unsafe_allow_html=True)
             
-            # TCO Analysis
-            st.subheader(":chart_with_downwards_trend: {}-Year TCO Comparison".format(years))
-            tco_df = pd.DataFrame(calculator.tco_data)
-            fig = px.line(
-                tco_df, 
-                x="Year", 
-                y=["OnPrem", "Cloud"],
-                labels={"value": "Cost ($)", "variable": "Deployment"},
-                markers=True
-            )
-            fig.update_layout(
-                plot_bgcolor="rgba(0,0,0,0)",
-                xaxis_title="Year",
-                yaxis_title="Cumulative Cost ($)",
-                legend_title="Deployment Type"
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            if not advisory_found:
+                st.info("✅ No optimization advisories - your configuration looks good!")
             
-            # Risk Assessment
-            st.subheader(":triangular_flag_on_post: Risk Assessment Matrix")
-            st.markdown("""
-                <div class="risk-matrix">
-                <div class="risk-cell" style="background-color:#10B981;grid-column:1;grid-row:1">Low Impact<br>Low Likelihood</div>
-                <div class="risk-cell" style="background-color:#A7F3D0;grid-column:2;grid-row:1">Medium Impact<br>Low Likelihood</div>
-                <div class="risk-cell" style="background-color:#FDE68A;grid-column:3;grid-row:1">High Impact<br>Low Likelihood</div>
-                <div class="risk-cell" style="background-color:#FCD34D;grid-column:4;grid-row:1">Very High Impact<br>Low Likelihood</div>
-                <div class="risk-cell" style="background-color:#FCA5A5;grid-column:5;grid-row:1">Critical Impact<br>Low Likelihood</div>
-
-                <div class="risk-cell" style="background-color:#A7F3D0;grid-column:1;grid-row:2">Low Impact<br>Medium Likelihood</div>
-                <div class="risk-cell" style="background-color:#FDE68A;grid-column:2;grid-row:2">Medium Impact<br>Medium Likelihood</div>
-                <div class="risk-cell" style="background-color:#FCD34D;grid-column:3;grid-row:2">High Impact<br>Medium Likelihood</div>
-                <div class="risk-cell" style="background-color:#FCA5A5;grid-column:4;grid-row:2">Very High Impact<br>Medium Likelihood</div>
-                <div class="risk-cell" style="background-color:#EF4444;grid-column:5;grid-row:2">Critical Impact<br>Medium Likelihood</div>
-
-                <div class="risk-cell" style="background-color:#FDE68A;grid-column:1;grid-row:3">Low Impact<br>High Likelihood</div>
-                <div class="risk-cell" style="background-color:#FCD34D;grid-column:2;grid-row:3">Medium Impact<br>High Likelihood</div>
-                <div class="risk-cell" style="background-color:#FCA5A5;grid-column:3;grid-row:3">High Impact<br>High Likelihood</div>
-                <div class="risk-cell" style="background-color:#EF4444;grid-column:4;grid-row:3">Very High Impact<br>High Likelihood</div>
-                <div class="risk-cell" style="background-color:#B91C1C;grid-column:5;grid-row:3">Critical Impact<br>High Likelihood</div>
-                </div>
-            """, unsafe_allow_html=True)
+            # TCO Analysis
+            if hasattr(calculator, 'tco_data') and calculator.tco_data:
+                st.subheader(f"📉 {years}-Year TCO Comparison")
+                tco_df = pd.DataFrame(calculator.tco_data)
+                fig = px.line(
+                    tco_df, 
+                    x="Year", 
+                    y=["OnPrem", "Cloud"],
+                    labels={"value": "Cost ($)", "variable": "Deployment"},
+                    markers=True,
+                    title="Total Cost of Ownership Comparison"
+                )
+                fig.update_layout(
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    xaxis_title="Year",
+                    yaxis_title="Cumulative Cost ($)",
+                    legend_title="Deployment Type"
+                )
+                st.plotly_chart(fig, use_container_width=True)
             
             # Resource Forecast
-            st.subheader(":crystal_ball: Resource Utilization Forecast")
+            st.subheader("🔮 Resource Utilization Forecast")
             forecast_data = []
             current_storage = storage
             current_cores = cores
@@ -283,24 +309,57 @@ if st.button("Generate Sizing Recommendations", type="primary", use_container_wi
                 })
             
             forecast_df = pd.DataFrame(forecast_data)
-            fig = px.bar(
+            fig2 = px.bar(
                 forecast_df, 
                 x="Year", 
                 y=["Storage (GB)", "vCPUs", "IOPS"],
                 barmode="group",
-                labels={"value": "Resource Requirement", "variable": "Resource Type"}
+                labels={"value": "Resource Requirement", "variable": "Resource Type"},
+                title="Projected Resource Growth"
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig2, use_container_width=True)
             
             st.success(f"✅ Recommendations generated in {time.time()-start_time:.2f} seconds")
             
         except Exception as e:
             st.error(f"🚨 Error generating recommendations: {str(e)}")
+            st.error("Please check your input parameters and try again.")
+            with st.expander("Error Details"):
+                st.code(traceback.format_exc())
+
+# Download handlers
+if download_excel and 'calculator' in st.session_state:
+    try:
+        excel_data = report_generator.generate_excel_report(st.session_state['calculator'])
+        st.download_button(
+            label="📊 Download Excel Report",
+            data=excel_data,
+            file_name=f"aws_rds_sizing_report_{st.session_state['calculator'].inputs['engine']}_{st.session_state['calculator'].inputs['region']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        st.error(f"Error generating Excel report: {str(e)}")
+
+if download_pdf and 'calculator' in st.session_state:
+    try:
+        pdf_data = report_generator.generate_pdf_report(st.session_state['calculator'])
+        st.download_button(
+            label="📄 Download PDF Report",
+            data=pdf_data,
+            file_name=f"aws_rds_sizing_report_{st.session_state['calculator'].inputs['engine']}_{st.session_state['calculator'].inputs['region']}.pdf",
+            mime="application/pdf"
+        )
+    except Exception as e:
+        st.error(f"Error generating PDF report: {str(e)}")
 
 # Footer
 st.markdown("---")
 st.markdown("""
-**Enterprise-Grade Features**  
+**🌟 Enterprise-Grade Features**  
 ✔ Real-time AWS pricing  ✔ TCO analysis  ✔ Risk assessment matrix  ✔ Multi-engine support  
 ✔ Performance optimization  ✔ Compliance frameworks  ✔ HA/DR configurations  ✔ Multi-year projections  
+
+**💡 Supported Database Engines:** Oracle EE/SE, PostgreSQL, Aurora PostgreSQL/MySQL, SQL Server  
+**🌍 Supported Regions:** US East/West, EU West, AP Southeast  
+**📊 Export Formats:** Excel, PDF, CSV reports with detailed analysis  
 """)
