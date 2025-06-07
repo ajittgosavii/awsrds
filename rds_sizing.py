@@ -64,65 +64,9 @@ class RDSDatabaseSizingCalculator:
     }
     
     def __init__(self):
-        # Load instance database
-        with open('instance_database.json') as f:
-            self.INSTANCE_DB = json.load(f)
-        
-        # Initialize pricing data with default values
-        self.pricing_data = {
-            "storage": {
-                "us-east-1": {
-                    "gp2": 0.10,
-                    "gp3": {
-                        "gb": 0.08,
-                        "iops": 0.005,
-                        "throughput": 0.04
-                    },
-                    "io1": {
-                        "gb": 0.125,
-                        "iops": 0.065
-                    },
-                    "io2": {
-                        "gb": 0.15,
-                        "iops": 0.065
-                    }
-                },
-                "default": {
-                    "gp2": 0.11,
-                    "gp3": {
-                        "gb": 0.09,
-                        "iops": 0.006,
-                        "throughput": 0.045
-                    },
-                    "io1": {
-                        "gb": 0.135,
-                        "iops": 0.07
-                    },
-                    "io2": {
-                        "gb": 0.16,
-                        "iops": 0.07
-                    }
-                }
-            },
-            "backup": {
-                "us-east-1": 0.05,
-                "default": 0.055
-            },
-            "data_transfer": {
-                "us-east-1": 0.01,
-                "default": 0.02
-            },
-            "serverless": {
-                "us-east-1": {
-                    "aurora-postgresql": {"acu": 0.12, "storage": 0.10},
-                    "aurora-mysql": {"acu": 0.12, "storage": 0.10}
-                },
-                "default": {
-                    "aurora-postgresql": {"acu": 0.13, "storage": 0.11},
-                    "aurora-mysql": {"acu": 0.13, "storage": 0.11}
-                }
-            }
-        }
+          # Replace static pricing with dynamic client
+            from aws_pricing import AWSPricing
+            self.pricing_client = AWSPricing()        
         
         self.inputs = {
             "region": "us-east-1",
@@ -317,38 +261,30 @@ class RDSDatabaseSizingCalculator:
             if not engine_data:
                 raise ValueError(f"No instances found for engine '{engine}' in any region")
         
-        candidates = [
-            inst for inst in engine_data 
-            if inst["vCPU"] >= vcpus 
-            and inst["memory"] >= ram
-            and inst.get("max_iops", float('inf')) >= iops
-        ]
-        
-        # Fallback for when no candidates match
-        if not candidates:
-            # Find any instance that meets CPU requirements
-            fallback_candidates = [
-                inst for inst in engine_data 
-                if inst["vCPU"] >= vcpus
-            ]
+       # Relaxed candidate filtering
+    candidates = [
+        inst for inst in engine_data 
+        if inst["vCPU"] >= vcpus * 0.8  # Allow 20% underprovisioning
+        and inst["memory"] >= ram * 0.8
+        # Remove strict IOPS constraint
+    ]
+    
+    if not candidates:
+        # Find closest match by performance score
+        def performance_score(inst):
+            cpu_match = 1 - abs(inst["vCPU"] - vcpus) / max(vcpus, 1)
+            ram_match = 1 - abs(inst["memory"] - ram) / max(ram, 1)
+            return (cpu_match * 0.6) + (ram_match * 0.4)
             
-            if fallback_candidates:
-                # Select smallest instance that meets CPU requirements
-                return min(fallback_candidates, key=lambda x: x["vCPU"])
-            else:
-                # Return first available instance as last resort
-                return engine_data[0] if engine_data else None
-        
-        # Cost-performance scoring
-        def instance_score(instance):
-            # Weighted score: 60% cost, 30% performance, 10% newest generation
-            cost = instance["pricing"]["ondemand"]
-            perf = instance["vCPU"] * instance["memory"]
-            gen_factor = 1.0 if "6" in instance["type"] else 0.8
-            
-            return (1/cost) * 0.6 + perf * 0.3 + gen_factor * 0.1
-        
-        return max(candidates, key=instance_score)
+        return max(engine_data, key=performance_score)
+    
+    # Cost-performance scoring with relaxed weights
+    def instance_score(instance):
+        cost = instance["pricing"]["ondemand"]
+        perf = (instance["vCPU"] * 0.5) + (instance["memory"] * 0.5)
+        return perf / cost  # Higher value = better value
+    
+    return min(candidates, key=lambda x: x["pricing"]["ondemand"])  # Select cheapest valid option
 
     def _calculate_costs(self, instance, storage, iops, env):
         """Comprehensive cost calculation for both serverless and provisioned"""
