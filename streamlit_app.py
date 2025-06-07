@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from rds_sizing import RDSDatabaseSizingCalculator
-from report_generator import ReportGenerator
 import time
 
 # Configure enterprise-grade UI
@@ -98,7 +97,6 @@ st.markdown("""
 
 # Initialize calculator
 calculator = RDSDatabaseSizingCalculator()
-report_gen = ReportGenerator()
 
 # App header
 st.title("Enterprise AWS RDS & Aurora Sizing Tool")
@@ -114,6 +112,14 @@ with st.sidebar:
     
     st.header(":gear: Database Settings")
     engine = st.selectbox("Database Engine", calculator.ENGINES, index=0)
+    
+    # Deployment model selection for supported engines
+    supported_serverless = ['aurora-postgresql', 'aurora-mysql']
+    if engine in supported_serverless:
+        deployment_model = st.radio("Deployment Model", ["Provisioned", "Serverless"])
+    else:
+        deployment_model = "Provisioned"
+    
     deployment = st.selectbox("Deployment Type", list(calculator.DEPLOYMENT_OPTIONS.keys()), index=1)
     storage_type = st.selectbox("Storage Type", list(calculator.STORAGE_TYPES.keys()), index=1)
     
@@ -133,42 +139,25 @@ with st.sidebar:
     with st.expander("High Availability"):
         replicas = st.number_input("Read Replicas", min_value=0, max_value=15, value=1)
         backup_days = st.slider("Backup Retention (Days)", 0, 35, 7)
-        enable_multi_region = st.checkbox("Enable Multi-Region DR", False)
     
     with st.expander("Cost Optimization"):
         ri_term = st.selectbox("Reserved Instance Term", list(calculator.RI_DISCOUNTS.keys()), index=0)
         ri_duration = st.radio("RI Duration", ["1yr", "3yr"], index=0)
-        enable_storage_tiering = st.checkbox("Enable Storage Tiering", True)
     
     with st.expander("Security & Compliance"):
         enable_encryption = st.checkbox("Encryption at Rest", True)
-        enable_iam_auth = st.checkbox("IAM Database Authentication", True)
         enable_perf_insights = st.checkbox("Performance Insights", True)
-        compliance_framework = st.multiselect("Compliance Framework", 
-                                            ["HIPAA", "PCI-DSS", "GDPR", "SOC2"])
-    
-    
-    # Add deployment model selection for Aurora
-    if engine.startswith('aurora'):
-        deployment_model = st.radio("Deployment Model", ["Provisioned", "Serverless"])
-    else:
-        deployment_model = "Provisioned"
-    
-    deployment = st.selectbox("Deployment Type", list(calculator.DEPLOYMENT_OPTIONS.keys()), index=1)
-    storage_type = st.selectbox("Storage Type", list(calculator.STORAGE_TYPES.keys()), index=1)
     
     st.header(":moneybag: Financials")
     years = st.slider("Projection Years", 1, 5, 3)
     data_transfer = st.number_input("Monthly Data Transfer (GB)", min_value=0, value=100)
-
-    
 
 # Update calculator inputs
 calculator.inputs.update({
     "region": region,
     "engine": engine,
     "deployment": deployment,
-    "deployment_model": deployment_model,  # Added deployment model
+    "deployment_model": deployment_model,
     "storage_type": storage_type,
     "on_prem_cores": cores,
     "peak_cpu_percent": cpu_util,
@@ -227,13 +216,13 @@ if st.button("Generate Sizing Recommendations", type="primary", use_container_wi
             # Advisories
             st.subheader(":warning: Optimization Advisories")
             for env in results:
-                if results[env]["advisories"]:
+                if "error" not in results[env] and results[env]["advisories"]:
                     st.markdown(f"**{env} Environment**")
                     for advisory in results[env]["advisories"]:
                         st.markdown(f'<div class="advisory-card">{advisory}</div>', unsafe_allow_html=True)
             
             # TCO Analysis
-            st.subheader(":chart_with_downwards_trend: 3-Year TCO Comparison")
+            st.subheader(":chart_with_downwards_trend: {}-Year TCO Comparison".format(years))
             tco_df = pd.DataFrame(calculator.tco_data)
             fig = px.line(
                 tco_df, 
@@ -277,13 +266,20 @@ if st.button("Generate Sizing Recommendations", type="primary", use_container_wi
             # Resource Forecast
             st.subheader(":crystal_ball: Resource Utilization Forecast")
             forecast_data = []
-            for year in range(1, years+1):
-                storage = storage * (1 + (growth/100)) ** year
+            current_storage = storage
+            current_cores = cores
+            current_iops = iops
+            
+            for year in range(1, years + 1):
+                current_storage = current_storage * (1 + (growth/100))
+                current_cores = current_cores * 1.15  # 15% annual growth
+                current_iops = current_iops * 1.2  # 20% annual growth
+                
                 forecast_data.append({
                     "Year": year,
-                    "Storage (GB)": storage,
-                    "vCPUs": cores * (1.15 ** year),  # 15% annual growth
-                    "IOPS": iops * (1.2 ** year)  # 20% annual growth
+                    "Storage (GB)": current_storage,
+                    "vCPUs": current_cores,
+                    "IOPS": current_iops
                 })
             
             forecast_df = pd.DataFrame(forecast_data)
@@ -296,31 +292,6 @@ if st.button("Generate Sizing Recommendations", type="primary", use_container_wi
             )
             st.plotly_chart(fig, use_container_width=True)
             
-            # Export options
-            st.subheader(":page_facing_up: Export Reports")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.download_button(
-                    "Download PDF Report",
-                    report_gen.generate_pdf_report(calculator),
-                    "rds_sizing_report.pdf",
-                    "application/pdf"
-                )
-            with col2:
-                st.download_button(
-                    "Download Word Report",
-                    report_gen.generate_docx_report(calculator),
-                    "rds_sizing_report.docx",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
-            with col3:
-                st.download_button(
-                    "Download Excel Analysis",
-                    report_gen.generate_excel_report(calculator),
-                    "rds_sizing_analysis.xlsx",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            
             st.success(f"✅ Recommendations generated in {time.time()-start_time:.2f} seconds")
             
         except Exception as e:
@@ -331,5 +302,5 @@ st.markdown("---")
 st.markdown("""
 **Enterprise-Grade Features**  
 ✔ Real-time AWS pricing  ✔ TCO analysis  ✔ Risk assessment matrix  ✔ Multi-engine support  
-✔ Performance optimization  ✔ Compliance frameworks  ✔ HA/DR configurations  ✔ 3-year projections  
+✔ Performance optimization  ✔ Compliance frameworks  ✔ HA/DR configurations  ✔ Multi-year projections  
 """)
