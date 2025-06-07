@@ -616,11 +616,13 @@ class RDSDatabaseSizingCalculator:
                 
                 # Balance performance headroom with cost (prefer some headroom for PROD)
                 headroom_score = min(cpu_headroom + ram_headroom, 3.0)  # Cap headroom benefit
-                cost_penalty = cost / 100  # Small cost penalty
+                cost_penalty = cost / 1000  # Reduced cost penalty for PROD
                 
                 return headroom_score - cost_penalty
             
-            return max(suitable_candidates, key=prod_score)
+            selected = max(suitable_candidates, key=prod_score)
+            print(f"DEBUG: PROD selected {selected['type']} from {len(suitable_candidates)} candidates")
+            return selected
         else:
             # For non-production, prioritize cost efficiency
             def cost_score(inst):
@@ -633,7 +635,9 @@ class RDSDatabaseSizingCalculator:
                 
                 return 1000 / (cost + waste_penalty + 1)  # Higher score = better value
             
-            return max(suitable_candidates, key=cost_score)
+            selected = max(suitable_candidates, key=cost_score)
+            print(f"DEBUG: {env} selected {selected['type']} from {len(suitable_candidates)} candidates")
+            return selected
     
     def _create_fallback_instances(self):
         """Create fallback instance types when specific engine data is missing"""

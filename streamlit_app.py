@@ -79,6 +79,8 @@ st.markdown("""
         padding: 1rem;
         border-radius: 8px;
         margin: 1rem 0;
+        color: #1F2937 !important;
+        font-weight: 500;
     }
     
     .risk-matrix {
@@ -264,7 +266,7 @@ if generate_btn:
                     advisory_found = True
                     st.markdown(f"**{env} Environment**")
                     for advisory in results[env]["advisories"]:
-                        st.markdown(f'<div class="advisory-card">{advisory}</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="advisory-card" style="color: #1F2937 !important;">{advisory}</div>', unsafe_allow_html=True)
             
             if not advisory_found:
                 st.info("✅ No optimization advisories - your configuration looks good!")
