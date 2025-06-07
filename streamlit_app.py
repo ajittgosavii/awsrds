@@ -10,9 +10,6 @@ from botocore.exceptions import NoCredentialsError
 import json
 
 # Import the improved calculator
-# from improved_rds_calculator import ImprovedRDSSizingCalculator
-
-# For demo purposes, we'll include a simplified version here
 class DemoRDSSizingCalculator:
     ENGINES = ['oracle-ee', 'oracle-se', 'postgres', 'aurora-postgresql', 'aurora-mysql', 'sqlserver']
     
@@ -28,7 +25,6 @@ class DemoRDSSizingCalculator:
         self.recommendations = {}
         self.inputs = {}
     
-    # Added missing method
     def _check_aws_credentials(self):
         """Check if AWS credentials are available"""
         try:
@@ -38,6 +34,7 @@ class DemoRDSSizingCalculator:
         except Exception:
             return False
             
+    # CORRECTED INDENTATION FOR THIS METHOD
     def refresh_aws_credentials(self):
         """Refresh AWS credentials and return status"""
         try:
@@ -49,7 +46,7 @@ class DemoRDSSizingCalculator:
             self.aws_available = False
             return False
             
-    # ... rest of the class remains unchanged ...
+    # ... rest of the class remains the same ...
     
     def _get_instance_data(self, engine, region):
         """Get instance data - real-time if available, fallback otherwise"""
