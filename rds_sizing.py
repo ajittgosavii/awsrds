@@ -93,6 +93,25 @@ class RDSDatabaseSizingCalculator:
         self.pricing_data = {}
         self.recommendations = {}
         self.tco_data = {}
+
+    def _calculate_ram(self, env):
+        """Enhanced RAM calculation with workload profiles"""
+        base_ram = self.inputs["on_prem_ram_gb"] * (self.inputs["peak_ram_percent"] / 100)
+        
+        # Engine-specific multipliers
+        engine_factors = {
+            "oracle-ee": 0.85,
+            "oracle-se": 0.8,
+            "postgres": 0.9,
+            "aurora-postgresql": 1.05,
+            "aurora-mysql": 1.1,
+            "sqlserver": 0.75
+        }
+        
+        # Environment factor
+        env_factor = self.ENV_PROFILES[env]["cpu_ram"]
+        
+        return max(4, math.ceil(base_ram * engine_factors[self.inputs["engine"]] * env_factor))
         
     def calculate_requirements(self, env):
         """Calculate requirements with enhanced optimization logic"""
