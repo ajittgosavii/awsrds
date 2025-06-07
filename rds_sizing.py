@@ -67,6 +67,25 @@ class RDSDatabaseSizingCalculator:
         with open('instance_database.json') as f:
             self.INSTANCE_DB = json.load(f)
         
+        # Initialize pricing data with default values
+        self.pricing_data = {
+            "storage": {
+                "us-east-1": {
+                    "gp2": 0.10,  # $0.10 per GB-month
+                    "gp3": {
+                        "gb": 0.08,      # $0.08 per GB-month
+                        "iops": 0.005,   # $0.005 per provisioned IOPS-month over 3,000
+                        "throughput": 0.04  # $0.04 per MBps-month over 125
+                    },
+                    "io1": 0.125,  # $0.125 per GB-month
+                    "io2": 0.15    # $0.15 per GB-month
+                }
+            },
+            "backup": {
+                "us-east-1": 0.05  # $0.05 per GB-month
+            }
+        }
+        
         self.inputs = {
             "region": "us-east-1",
             "engine": "oracle-ee",
@@ -90,7 +109,6 @@ class RDSDatabaseSizingCalculator:
             "ri_term": "No Upfront",
             "ri_duration": "1yr"
         }
-        self.pricing_data = {}
         self.recommendations = {}
         self.tco_data = {}
 
@@ -251,15 +269,24 @@ class RDSDatabaseSizingCalculator:
         
         # Storage cost
         storage_type = self.inputs["storage_type"]
-        storage_pricing = self.pricing_data["storage"][self.inputs["region"]][storage_type]
+        
+        # Get region pricing with fallback to us-east-1
+        region = self.inputs["region"]
+        if region not in self.pricing_data["storage"]:
+            region = "us-east-1"
+            logging.warning(f"Using default pricing for region: us-east-1")
+            
+        storage_pricing = self.pricing_data["storage"][region][storage_type]
         
         if storage_type == "gp3":
             # $0.08/GB + $0.005/provisioned IOPS over 3,000 + $0.04/MBps over 125
             base_cost = storage * storage_pricing["gb"]
             iops_cost = max(0, iops - 3000) * storage_pricing["iops"]
-            throughput_cost = max(0, min(iops * 0.256, 1000) - 125) * storage_pricing["throughput"]
+            throughput = min(iops * 0.256, 1000)
+            throughput_cost = max(0, throughput - 125) * storage_pricing["throughput"]
             storage_cost = base_cost + iops_cost + throughput_cost
         else:
+            # Simple per-GB pricing for other storage types
             storage_cost = storage * storage_pricing
         
         # HA cost
@@ -267,7 +294,7 @@ class RDSDatabaseSizingCalculator:
         ha_cost = monthly_instance * (deployment_factor - 1)  # Additional instances
         
         # Backup cost
-        backup_rate = self.pricing_data["backup"][self.inputs["region"]]
+        backup_rate = self.pricing_data["backup"].get(region, self.pricing_data["backup"]["us-east-1"])
         backup_cost = storage * backup_rate * (self.inputs["backup_retention"] / 30)
         
         # Feature costs
@@ -337,7 +364,11 @@ class RDSDatabaseSizingCalculator:
         """Generate recommendations for all environments"""
         self.recommendations = {}
         for env in self.ENV_PROFILES:
-            self.recommendations[env] = self.calculate_requirements(env)
+            try:
+                self.recommendations[env] = self.calculate_requirements(env)
+            except Exception as e:
+                logging.error(f"Error generating recommendations for {env}: {str(e)}")
+                self.recommendations[env] = {"error": str(e)}
         
         # Generate TCO comparison
         self._generate_tco_comparison()
@@ -358,6 +389,10 @@ class RDSDatabaseSizingCalculator:
             # Cloud costs
             cloud_cost = 0
             for env in self.recommendations:
+                # Skip environments with errors
+                if "error" in self.recommendations[env]:
+                    continue
+                    
                 # Scale costs by year (accounting for storage growth)
                 growth_factor = (1 + self.inputs["storage_growth_rate"]) ** (year-1)
                 env_cost = self.recommendations[env]["total_cost"] * growth_factor * 12
