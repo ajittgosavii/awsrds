@@ -86,15 +86,25 @@ st.markdown("""
     .risk-matrix {
         display: grid;
         grid-template-columns: repeat(5, 1fr);
+        grid-template-rows: repeat(3, 1fr);
         gap: 8px;
         margin-top: 1rem;
+        max-width: 800px;
+        margin-left: auto;
+        margin-right: auto;
     }
     
     .risk-cell {
         padding: 1rem;
         text-align: center;
-        border-radius: 4px;
+        border-radius: 8px;
         font-size: 0.8rem;
+        min-height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #E5E7EB;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
 </style>
 """, unsafe_allow_html=True)
