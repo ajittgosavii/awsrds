@@ -9,6 +9,19 @@ import boto3
 from botocore.exceptions import NoCredentialsError
 import json
 import io
+from datetime import datetime
+
+# PDF generation imports
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.pdfgen import canvas
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+import plotly.io as pio
+from PIL import Image as PILImage
+import base64
 
 # Import the improved calculator
 class DemoRDSSizingCalculator:
@@ -205,16 +218,16 @@ class DemoRDSSizingCalculator:
         ram_ratio = instance["memory"] / max(required_ram, 1)
         
         if cpu_ratio > 2:
-            advisories.append(f"⚠️ CPU over-provisioned: {instance['vCPU']} vs {required_vcpus} needed")
+            advisories.append(f"CPU over-provisioned: {instance['vCPU']} vs {required_vcpus} needed")
         
         if ram_ratio > 2:
-            advisories.append(f"⚠️ RAM over-provisioned: {instance['memory']}GB vs {required_ram}GB needed")
+            advisories.append(f"RAM over-provisioned: {instance['memory']}GB vs {required_ram}GB needed")
         
         if env == "PROD" and self.inputs.get("deployment") == "Single-AZ":
-            advisories.append("🚨 Use Multi-AZ for production high availability")
+            advisories.append("Use Multi-AZ for production high availability")
         
         if env in ["DEV", "QA"] and instance["pricing"]["ondemand"] > 1.0:
-            advisories.append("💡 Consider smaller instances for dev/test environments")
+            advisories.append("Consider smaller instances for dev/test environments")
         
         return advisories
     
@@ -258,9 +271,264 @@ class DemoRDSSizingCalculator:
         
         return self.bulk_recommendations
 
+class PDFReportGenerator:
+    def __init__(self):
+        self.styles = getSampleStyleSheet()
+        self.title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=self.styles['Heading1'],
+            fontSize=18,
+            spaceAfter=30,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor('#1f4e79')
+        )
+        self.heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=self.styles['Heading2'],
+            fontSize=14,
+            spaceAfter=12,
+            spaceBefore=20,
+            textColor=colors.HexColor('#2e5984')
+        )
+        self.normal_style = self.styles['Normal']
+    
+    def plotly_to_image(self, fig, width=600, height=400):
+        """Convert Plotly figure to image for PDF inclusion"""
+        try:
+            img_bytes = pio.to_image(fig, format="png", width=width, height=height, scale=1)
+            img_buffer = io.BytesIO(img_bytes)
+            return Image(img_buffer, width=width/2, height=height/2)
+        except Exception as e:
+            # Return placeholder if conversion fails
+            return Paragraph(f"[Chart conversion failed: {str(e)}]", self.normal_style)
+    
+    def generate_single_workload_pdf(self, results, inputs, charts_data=None):
+        """Generate PDF report for single workload"""
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        elements = []
+        
+        # Title
+        elements.append(Paragraph("AWS RDS Sizing Recommendation Report", self.title_style))
+        elements.append(Spacer(1, 20))
+        
+        # Report metadata
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        metadata_text = f"""
+        <b>Generated:</b> {current_time}<br/>
+        <b>Region:</b> {inputs.get('region', 'N/A')}<br/>
+        <b>Engine:</b> {inputs.get('engine', 'N/A')}<br/>
+        <b>Deployment:</b> {inputs.get('deployment', 'N/A')}
+        """
+        elements.append(Paragraph(metadata_text, self.normal_style))
+        elements.append(Spacer(1, 20))
+        
+        # Input Summary
+        elements.append(Paragraph("Input Configuration", self.heading_style))
+        input_data = [
+            ['Parameter', 'Value'],
+            ['CPU Cores', f"{inputs.get('on_prem_cores', 'N/A')}"],
+            ['Peak CPU %', f"{inputs.get('peak_cpu_percent', 'N/A')}%"],
+            ['RAM (GB)', f"{inputs.get('on_prem_ram_gb', 'N/A')}"],
+            ['Peak RAM %', f"{inputs.get('peak_ram_percent', 'N/A')}%"],
+            ['Storage (GB)', f"{inputs.get('storage_current_gb', 'N/A')}"],
+        ]
+        
+        input_table = Table(input_data)
+        input_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        elements.append(input_table)
+        elements.append(Spacer(1, 20))
+        
+        # Recommendations Table
+        elements.append(Paragraph("Environment Recommendations", self.heading_style))
+        
+        valid_results = {k: v for k, v in results.items() if 'error' not in v}
+        if valid_results:
+            table_data = [['Environment', 'Instance Type', 'vCPUs', 'RAM (GB)', 'Storage (GB)', 'Monthly Cost ($)']]
+            
+            for env, result in valid_results.items():
+                table_data.append([
+                    env,
+                    result['instance_type'],
+                    str(result['actual_vCPUs']),
+                    str(result['actual_RAM_GB']),
+                    str(result['storage_GB']),
+                    f"${result['total_cost']:,.0f}"
+                ])
+            
+            recommendations_table = Table(table_data)
+            recommendations_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ]))
+            elements.append(recommendations_table)
+            elements.append(Spacer(1, 20))
+        
+        # Add charts if provided
+        if charts_data:
+            for chart_title, fig in charts_data.items():
+                elements.append(Paragraph(chart_title, self.heading_style))
+                chart_image = self.plotly_to_image(fig)
+                elements.append(chart_image)
+                elements.append(Spacer(1, 20))
+        
+        # Optimization Advisories
+        elements.append(Paragraph("Optimization Advisories", self.heading_style))
+        advisories_found = False
+        
+        for env, result in valid_results.items():
+            if result.get('advisories'):
+                advisories_found = True
+                elements.append(Paragraph(f"<b>{env} Environment:</b>", self.normal_style))
+                for advisory in result['advisories']:
+                    elements.append(Paragraph(f"• {advisory}", self.normal_style))
+                elements.append(Spacer(1, 10))
+        
+        if not advisories_found:
+            elements.append(Paragraph("✓ No optimization advisories - your configuration looks optimal!", self.normal_style))
+        
+        # Build PDF
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer
+    
+    def generate_bulk_workload_pdf(self, bulk_results, global_settings):
+        """Generate PDF report for bulk workloads"""
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        elements = []
+        
+        # Title
+        elements.append(Paragraph("AWS RDS Bulk Sizing Report", self.title_style))
+        elements.append(Spacer(1, 20))
+        
+        # Report metadata
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        workload_count = len(bulk_results)
+        metadata_text = f"""
+        <b>Generated:</b> {current_time}<br/>
+        <b>Total Workloads:</b> {workload_count}<br/>
+        <b>Region:</b> {global_settings.get('region', 'N/A')}<br/>
+        <b>Engine:</b> {global_settings.get('engine', 'N/A')}<br/>
+        <b>Deployment:</b> {global_settings.get('deployment', 'N/A')}
+        """
+        elements.append(Paragraph(metadata_text, self.normal_style))
+        elements.append(Spacer(1, 20))
+        
+        # Summary table for each workload
+        elements.append(Paragraph("Workload Summary", self.heading_style))
+        
+        summary_data = [['Workload', 'PROD Instance', 'PROD Cost ($)', 'DEV Instance', 'DEV Cost ($)']]
+        
+        total_prod_cost = 0
+        total_dev_cost = 0
+        
+        for workload_name, workload_recommendations in bulk_results.items():
+            if 'error' not in workload_recommendations:
+                prod_result = workload_recommendations.get('PROD', {})
+                dev_result = workload_recommendations.get('DEV', {})
+                
+                prod_cost = prod_result.get('total_cost', 0)
+                dev_cost = dev_result.get('total_cost', 0)
+                
+                total_prod_cost += prod_cost
+                total_dev_cost += dev_cost
+                
+                summary_data.append([
+                    workload_name,
+                    prod_result.get('instance_type', 'N/A'),
+                    f"${prod_cost:,.0f}",
+                    dev_result.get('instance_type', 'N/A'),
+                    f"${dev_cost:,.0f}"
+                ])
+        
+        # Add totals row
+        summary_data.append([
+            '<b>TOTAL</b>',
+            '',
+            f"<b>${total_prod_cost:,.0f}</b>",
+            '',
+            f"<b>${total_dev_cost:,.0f}</b>"
+        ])
+        
+        summary_table = Table(summary_data)
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-2, -2), colors.beige),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E6E6FA')),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ]))
+        elements.append(summary_table)
+        elements.append(Spacer(1, 30))
+        
+        # Detailed breakdown for each workload
+        elements.append(PageBreak())
+        elements.append(Paragraph("Detailed Workload Breakdown", self.heading_style))
+        
+        for workload_name, workload_recommendations in bulk_results.items():
+            if 'error' not in workload_recommendations:
+                elements.append(Paragraph(f"<b>{workload_name}</b>", self.heading_style))
+                
+                # Create detailed table for this workload
+                detail_data = [['Environment', 'Instance Type', 'vCPUs', 'RAM (GB)', 'Storage (GB)', 'Monthly Cost ($)']]
+                
+                for env in ['PROD', 'SQA', 'QA', 'DEV']:
+                    if env in workload_recommendations:
+                        result = workload_recommendations[env]
+                        detail_data.append([
+                            env,
+                            result['instance_type'],
+                            str(result['actual_vCPUs']),
+                            str(result['actual_RAM_GB']),
+                            str(result['storage_GB']),
+                            f"${result['total_cost']:,.0f}"
+                        ])
+                
+                detail_table = Table(detail_data)
+                detail_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#70AD47')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 9),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ]))
+                elements.append(detail_table)
+                elements.append(Spacer(1, 15))
+        
+        # Build PDF
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer
+
 # Configure Streamlit
 st.set_page_config(
-    page_title="Enhanced AWS RDS Sizing Tool with Bulk Upload",
+    page_title="Enhanced AWS RDS Sizing Tool with PDF Reports",
     layout="wide",
     page_icon="🚀"
 )
@@ -333,19 +601,31 @@ st.markdown("""
         padding: 1rem;
         margin: 1rem 0;
     }
+    .export-section {
+        background: #f0f8ff;
+        border: 1px solid #87ceeb;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize calculator
+# Initialize calculator and PDF generator
 @st.cache_resource
 def get_calculator():
     return DemoRDSSizingCalculator()
 
+@st.cache_resource
+def get_pdf_generator():
+    return PDFReportGenerator()
+
 calculator = get_calculator()
+pdf_generator = get_pdf_generator()
 
 # Header
 st.title("🚀 Enhanced AWS RDS & Aurora Sizing Tool")
-st.markdown("**Real-time AWS pricing integration with bulk upload support**")
+st.markdown("**Real-time AWS pricing integration with bulk upload support and PDF reports**")
 
 # Mode Selection
 mode = st.radio(
@@ -431,6 +711,7 @@ if mode == "Single Workload":
                     st.session_state['results'] = results
                     st.session_state['generation_time'] = time.time() - start_time
                     st.session_state['mode'] = 'single'
+                    st.session_state['current_inputs'] = calculator.inputs.copy()
                     
                     # Verify recommendation diversity
                     instance_types = [r.get('instance_type', 'N/A') for r in results.values() if 'error' not in r]
@@ -447,7 +728,7 @@ if mode == "Single Workload":
                         st.code(traceback.format_exc())
 
     with col2:
-        export_btn = st.button("📊 Export Results", use_container_width=True)
+        export_btn = st.button("📊 Export CSV", use_container_width=True)
 
     with col3:
         if st.button("🔧 Debug Info", use_container_width=True):
@@ -542,6 +823,7 @@ else:  # Bulk Upload Mode
                                 st.session_state['bulk_generation_time'] = time.time() - start_time
                                 st.session_state['mode'] = 'bulk'
                                 st.session_state['workload_count'] = len(workload_data)
+                                st.session_state['bulk_global_settings'] = global_settings
                                 
                                 st.success(f"✅ Processed {len(bulk_results)} workloads successfully!")
                                 
@@ -551,7 +833,7 @@ else:  # Bulk Upload Mode
                                     st.code(traceback.format_exc())
                 
                 with col2:
-                    bulk_export_btn = st.button("📊 Export Bulk Results", use_container_width=True)
+                    bulk_export_btn = st.button("📊 Export CSV", use_container_width=True)
         
         except Exception as e:
             st.error(f"❌ Error reading file: {str(e)}")
@@ -601,6 +883,99 @@ if st.session_state.get('mode') == 'single' and 'results' in st.session_state:
                 <div class="metric-label">Generation Time</div>
             </div>
             """, unsafe_allow_html=True)
+        
+        # Export Section
+        st.markdown('<div class="export-section">', unsafe_allow_html=True)
+        st.subheader("📄 Export Options")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📥 Download PDF Report", type="primary", use_container_width=True):
+                try:
+                    with st.spinner("🔄 Generating PDF report..."):
+                        # Generate charts for PDF
+                        df_data = []
+                        for env, result in valid_results.items():
+                            df_data.append({
+                                'Environment': env,
+                                'Instance Type': result['instance_type'],
+                                'Required vCPUs': result['vCPUs'],
+                                'Actual vCPUs': result['actual_vCPUs'],
+                                'Required RAM (GB)': result['RAM_GB'],
+                                'Actual RAM (GB)': result['actual_RAM_GB'],
+                                'Storage (GB)': result['storage_GB'],
+                                'Monthly Cost': result['total_cost']
+                            })
+                        
+                        df = pd.DataFrame(df_data)
+                        
+                        # Create charts for PDF
+                        charts_data = {}
+                        
+                        # Cost comparison chart
+                        fig1 = px.bar(
+                            df, 
+                            x='Environment', 
+                            y='Monthly Cost',
+                            color='Environment',
+                            title='Monthly Cost by Environment'
+                        )
+                        charts_data['Cost Comparison by Environment'] = fig1
+                        
+                        # Resource allocation chart
+                        fig2 = px.bar(
+                            df,
+                            x='Environment',
+                            y=['Required vCPUs', 'Actual vCPUs'],
+                            title='CPU Allocation vs Requirements',
+                            barmode='group'
+                        )
+                        charts_data['CPU Allocation vs Requirements'] = fig2
+                        
+                        # Generate PDF
+                        pdf_buffer = pdf_generator.generate_single_workload_pdf(
+                            results, 
+                            st.session_state.get('current_inputs', {}),
+                            charts_data
+                        )
+                        
+                        # Download button
+                        st.download_button(
+                            label="📥 Download PDF Report",
+                            data=pdf_buffer.getvalue(),
+                            file_name=f"rds_sizing_report_{engine}_{region}_{int(time.time())}.pdf",
+                            mime="application/pdf"
+                        )
+                        
+                except Exception as e:
+                    st.error(f"❌ Error generating PDF: {str(e)}")
+                    with st.expander("Error Details"):
+                        st.code(traceback.format_exc())
+        
+        with col2:
+            if st.button("📊 Download CSV Report", use_container_width=True):
+                df_export = pd.DataFrame([
+                    {
+                        'Environment': env,
+                        'Instance Type': result['instance_type'],
+                        'vCPUs': result['actual_vCPUs'],
+                        'RAM (GB)': result['actual_RAM_GB'],
+                        'Storage (GB)': result['storage_GB'],
+                        'Monthly Cost': result['total_cost']
+                    }
+                    for env, result in valid_results.items()
+                ])
+                
+                csv = df_export.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download CSV",
+                    data=csv,
+                    file_name=f"rds_sizing_{engine}_{region}_{int(time.time())}.csv",
+                    mime="text/csv"
+                )
+        
+        st.markdown('</div>', unsafe_allow_html=True)
         
         # Detailed Results Table
         st.header("📋 Environment-Specific Recommendations")
@@ -752,6 +1127,63 @@ elif st.session_state.get('mode') == 'bulk' and 'bulk_results' in st.session_sta
         </div>
         """, unsafe_allow_html=True)
     
+    # Bulk Export Section
+    st.markdown('<div class="export-section">', unsafe_allow_html=True)
+    st.subheader("📄 Bulk Export Options")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("📥 Download Bulk PDF Report", type="primary", use_container_width=True):
+            try:
+                with st.spinner("🔄 Generating bulk PDF report..."):
+                    global_settings = st.session_state.get('bulk_global_settings', {})
+                    pdf_buffer = pdf_generator.generate_bulk_workload_pdf(bulk_results, global_settings)
+                    
+                    st.download_button(
+                        label="📥 Download Bulk PDF Report",
+                        data=pdf_buffer.getvalue(),
+                        file_name=f"rds_bulk_report_{global_settings.get('engine', 'unknown')}_{global_settings.get('region', 'unknown')}_{int(time.time())}.pdf",
+                        mime="application/pdf"
+                    )
+                    
+            except Exception as e:
+                st.error(f"❌ Error generating bulk PDF: {str(e)}")
+                with st.expander("Error Details"):
+                    st.code(traceback.format_exc())
+    
+    with col2:
+        if st.button("📊 Download Bulk CSV", use_container_width=True):
+            export_data = []
+            for workload_name, workload_recommendations in bulk_results.items():
+                if 'error' not in workload_recommendations:
+                    for env, result in workload_recommendations.items():
+                        export_data.append({
+                            'Workload': workload_name,
+                            'Environment': env,
+                            'Instance Type': result['instance_type'],
+                            'Required vCPUs': result['vCPUs'],
+                            'Actual vCPUs': result['actual_vCPUs'],
+                            'Required RAM (GB)': result['RAM_GB'],
+                            'Actual RAM (GB)': result['actual_RAM_GB'],
+                            'Storage (GB)': result['storage_GB'],
+                            'Instance Cost': result['instance_cost'],
+                            'Storage Cost': result['storage_cost'],
+                            'Total Monthly Cost': result['total_cost']
+                        })
+            
+            if export_data:
+                export_df = pd.DataFrame(export_data)
+                csv = export_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Bulk CSV",
+                    data=csv,
+                    file_name=f"rds_bulk_sizing_{st.session_state.get('bulk_global_settings', {}).get('engine', 'unknown')}_{st.session_state.get('bulk_global_settings', {}).get('region', 'unknown')}_{int(time.time())}.csv",
+                    mime="text/csv"
+                )
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
     # Bulk Results Table
     st.header("📋 Bulk Recommendations Summary")
     
@@ -838,63 +1270,6 @@ elif st.session_state.get('mode') == 'bulk' and 'bulk_results' in st.session_sta
         for workload, error_info in error_workloads.items():
             st.error(f"{workload}: {error_info['error']}")
 
-# Export functionality
-if st.session_state.get('mode') == 'single' and export_btn and 'results' in st.session_state:
-    results = st.session_state['results']
-    valid_results = {k: v for k, v in results.items() if 'error' not in v}
-    
-    if valid_results:
-        df_export = pd.DataFrame([
-            {
-                'Environment': env,
-                'Instance Type': result['instance_type'],
-                'vCPUs': result['actual_vCPUs'],
-                'RAM (GB)': result['actual_RAM_GB'],
-                'Storage (GB)': result['storage_GB'],
-                'Monthly Cost': result['total_cost']
-            }
-            for env, result in valid_results.items()
-        ])
-        
-        csv = df_export.to_csv(index=False)
-        st.download_button(
-            label="📥 Download CSV",
-            data=csv,
-            file_name=f"rds_sizing_{engine}_{region}_{int(time.time())}.csv",
-            mime="text/csv"
-        )
-
-elif st.session_state.get('mode') == 'bulk' and 'bulk_export_btn' in locals() and bulk_export_btn and 'bulk_results' in st.session_state:
-    bulk_results = st.session_state['bulk_results']
-    
-    export_data = []
-    for workload_name, workload_recommendations in bulk_results.items():
-        if 'error' not in workload_recommendations:
-            for env, result in workload_recommendations.items():
-                export_data.append({
-                    'Workload': workload_name,
-                    'Environment': env,
-                    'Instance Type': result['instance_type'],
-                    'Required vCPUs': result['vCPUs'],
-                    'Actual vCPUs': result['actual_vCPUs'],
-                    'Required RAM (GB)': result['RAM_GB'],
-                    'Actual RAM (GB)': result['actual_RAM_GB'],
-                    'Storage (GB)': result['storage_GB'],
-                    'Instance Cost': result['instance_cost'],
-                    'Storage Cost': result['storage_cost'],
-                    'Total Monthly Cost': result['total_cost']
-                })
-    
-    if export_data:
-        export_df = pd.DataFrame(export_data)
-        csv = export_df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download Bulk Results CSV",
-            data=csv,
-            file_name=f"rds_bulk_sizing_{engine}_{region}_{int(time.time())}.csv",
-            mime="text/csv"
-        )
-
 # Debug Information
 if st.session_state.get('show_debug', False):
     st.header("🔧 Debug Information")
@@ -924,5 +1299,7 @@ st.markdown("""
 - ✅ Bulk upload and processing of multiple workloads
 - ✅ CSV/Excel template download for easy data entry
 - ✅ Comprehensive cost analysis and visualization
-- ✅ Export capabilities for both single and bulk results
+- ✅ **PDF Report Generation** with charts and detailed analysis
+- ✅ Export capabilities for both single and bulk results (CSV & PDF)
+- ✅ Professional PDF reports with branding and formatting
 """)
