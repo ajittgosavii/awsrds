@@ -8,6 +8,7 @@ import traceback
 import boto3
 from botocore.exceptions import NoCredentialsError
 import json
+import io
 
 # Import the improved calculator
 class DemoRDSSizingCalculator:
@@ -24,6 +25,7 @@ class DemoRDSSizingCalculator:
         self.aws_available = self._check_aws_credentials()
         self.recommendations = {}
         self.inputs = {}
+        self.bulk_recommendations = {}
     
     def _check_aws_credentials(self):
         """Check if AWS credentials are available"""
@@ -34,7 +36,6 @@ class DemoRDSSizingCalculator:
         except Exception:
             return False
             
-    # CORRECTED INDENTATION FOR THIS METHOD
     def refresh_aws_credentials(self):
         """Refresh AWS credentials and return status"""
         try:
@@ -46,12 +47,8 @@ class DemoRDSSizingCalculator:
             self.aws_available = False
             return False
             
-    # ... rest of the class remains the same ...
-    
     def _get_instance_data(self, engine, region):
         """Get instance data - real-time if available, fallback otherwise"""
-        # This would contain the real AWS API calls
-        # For demo, using enhanced fallback data
         instances = {
             "postgres": [
                 {"type": "db.t3.micro", "vCPU": 2, "memory": 1, "pricing": {"ondemand": 0.026}},
@@ -232,16 +229,43 @@ class DemoRDSSizingCalculator:
                 self.recommendations[env] = {"error": str(e)}
         
         return self.recommendations
+    
+    def process_bulk_workloads(self, workload_data, global_settings):
+        """Process multiple workloads from uploaded data"""
+        self.bulk_recommendations = {}
+        
+        for index, row in workload_data.iterrows():
+            workload_name = row.get('workload_name', f"Workload_{index + 1}")
+            
+            # Set inputs for this workload
+            self.inputs = {
+                "region": global_settings["region"],
+                "engine": global_settings["engine"],
+                "deployment": global_settings["deployment"],
+                "on_prem_cores": int(row["cpu_cores"]),
+                "peak_cpu_percent": float(row["peak_cpu_percent"]),
+                "on_prem_ram_gb": int(row["ram_gb"]),
+                "peak_ram_percent": float(row["peak_ram_percent"]),
+                "storage_current_gb": int(row["storage_gb"]),
+                "storage_growth_rate": float(row.get("growth_rate_percent", 20)) / 100
+            }
+            
+            try:
+                workload_recommendations = self.generate_all_recommendations()
+                self.bulk_recommendations[workload_name] = workload_recommendations
+            except Exception as e:
+                self.bulk_recommendations[workload_name] = {"error": str(e)}
+        
+        return self.bulk_recommendations
 
 # Configure Streamlit
 st.set_page_config(
-    page_title="Enhanced AWS RDS Sizing Tool",
+    page_title="Enhanced AWS RDS Sizing Tool with Bulk Upload",
     layout="wide",
     page_icon="🚀"
 )
 
 # Custom CSS
-
 st.markdown("""
 <style>
     .main > div {
@@ -257,12 +281,12 @@ st.markdown("""
     .metric-value {
         font-size: 2rem;
         font-weight: bold;
-        color: #111;  /* Changed to almost black */
+        color: #111;
     }
     .metric-label {
         font-size: 0.9rem;
         opacity: 0.9;
-        color: #eee;  /* Light gray for labels */
+        color: #eee;
     }
     .advisory-box {
         background: #fff3cd;
@@ -291,10 +315,23 @@ st.markdown("""
         padding: 0.75rem;
         margin: 0.5rem 0;
     }
-    /* Add specific styling for cost values */
     .metric-cost {
-        color: #111 !important;  /* Force black for cost values */
-        font-size: 2.2rem;       /* Slightly larger for emphasis */
+        color: #111 !important;
+        font-size: 2.2rem;
+    }
+    .upload-section {
+        background: #f8f9fa;
+        border: 2px dashed #6c757d;
+        border-radius: 10px;
+        padding: 2rem;
+        text-align: center;
+        margin: 1rem 0;
+    }
+    .sample-template {
+        background: #e7f3ff;
+        border-left: 4px solid #007bff;
+        padding: 1rem;
+        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -308,7 +345,15 @@ calculator = get_calculator()
 
 # Header
 st.title("🚀 Enhanced AWS RDS & Aurora Sizing Tool")
-st.markdown("**Real-time AWS pricing integration with improved environment-specific recommendations**")
+st.markdown("**Real-time AWS pricing integration with bulk upload support**")
+
+# Mode Selection
+mode = st.radio(
+    "Select Mode:",
+    ["Single Workload", "Bulk Upload"],
+    horizontal=True,
+    help="Choose between single workload analysis or bulk processing of multiple workloads"
+)
 
 # AWS Status Check
 col1, col2 = st.columns([3, 1])
@@ -320,7 +365,6 @@ with col1:
 
 with col2:
     if st.button("🔄 Refresh AWS Status"):
-        # Show spinner while checking credentials
         with st.spinner("Checking AWS credentials..."):
             success = calculator.refresh_aws_credentials()
             
@@ -329,7 +373,6 @@ with col2:
             st.rerun()
         else:
             st.error("❌ Failed to find valid AWS credentials. Using fallback data.")
-            # Wait a moment so user can see the message
             time.sleep(2)
             st.rerun()
 
@@ -340,19 +383,20 @@ with st.sidebar:
     # AWS Settings
     with st.expander("☁️ AWS Settings", expanded=True):
         region = st.selectbox("Region", ["us-east-1", "us-west-1", "us-west-2", "eu-west-1"], index=0)
-        engine = st.selectbox("Database Engine", calculator.ENGINES, index=2)  # Default to postgres
+        engine = st.selectbox("Database Engine", calculator.ENGINES, index=2)
         deployment = st.selectbox("Deployment", ["Single-AZ", "Multi-AZ", "Multi-AZ Cluster"], index=1)
     
-    # Workload Profile
-    with st.expander("📊 Current Workload", expanded=True):
-        cores = st.number_input("CPU Cores", min_value=1, max_value=128, value=8, step=1)
-        cpu_util = st.slider("Peak CPU %", 1, 100, 70)
-        ram = st.number_input("RAM (GB)", min_value=1, max_value=1024, value=32, step=1)
-        ram_util = st.slider("Peak RAM %", 1, 100, 80)
-    
-    with st.expander("💾 Storage", expanded=True):
-        storage = st.number_input("Current Storage (GB)", min_value=1, value=250)
-        growth = st.number_input("Annual Growth %", min_value=0, max_value=100, value=20)
+    if mode == "Single Workload":
+        # Workload Profile
+        with st.expander("📊 Current Workload", expanded=True):
+            cores = st.number_input("CPU Cores", min_value=1, max_value=128, value=8, step=1)
+            cpu_util = st.slider("Peak CPU %", 1, 100, 70)
+            ram = st.number_input("RAM (GB)", min_value=1, max_value=1024, value=32, step=1)
+            ram_util = st.slider("Peak RAM %", 1, 100, 80)
+        
+        with st.expander("💾 Storage", expanded=True):
+            storage = st.number_input("Current Storage (GB)", min_value=1, value=250)
+            growth = st.number_input("Annual Growth %", min_value=0, max_value=100, value=20)
     
     # Real-time pricing toggle
     st.header("⚡ Performance")
@@ -360,55 +404,160 @@ with st.sidebar:
     if use_realtime and not calculator.aws_available:
         st.warning("⚠️ AWS credentials required for real-time pricing")
 
-# Update calculator inputs
-calculator.inputs = {
-    "region": region,
-    "engine": engine,
-    "deployment": deployment,
-    "on_prem_cores": cores,
-    "peak_cpu_percent": cpu_util,
-    "on_prem_ram_gb": ram,
-    "peak_ram_percent": ram_util,
-    "storage_current_gb": storage,
-    "storage_growth_rate": growth/100
-}
+# Main Content based on mode
+if mode == "Single Workload":
+    # Update calculator inputs
+    calculator.inputs = {
+        "region": region,
+        "engine": engine,
+        "deployment": deployment,
+        "on_prem_cores": cores,
+        "peak_cpu_percent": cpu_util,
+        "on_prem_ram_gb": ram,
+        "peak_ram_percent": ram_util,
+        "storage_current_gb": storage,
+        "storage_growth_rate": growth/100
+    }
 
-# Main Content
-col1, col2, col3 = st.columns([2, 1, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
 
-with col1:
-    if st.button("🚀 Generate Sizing Recommendations", type="primary", use_container_width=True):
-        with st.spinner("🔄 Generating recommendations..."):
-            start_time = time.time()
+    with col1:
+        if st.button("🚀 Generate Sizing Recommendations", type="primary", use_container_width=True):
+            with st.spinner("🔄 Generating recommendations..."):
+                start_time = time.time()
+                
+                try:
+                    results = calculator.generate_all_recommendations()
+                    st.session_state['results'] = results
+                    st.session_state['generation_time'] = time.time() - start_time
+                    st.session_state['mode'] = 'single'
+                    
+                    # Verify recommendation diversity
+                    instance_types = [r.get('instance_type', 'N/A') for r in results.values() if 'error' not in r]
+                    unique_types = len(set(instance_types))
+                    
+                    if unique_types == 1 and len(instance_types) > 1:
+                        st.warning(f"⚠️ All environments received same instance type: {instance_types[0]}")
+                    else:
+                        st.success(f"✅ Generated diverse recommendations: {unique_types} different instance types")
+                    
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    with st.expander("Error Details"):
+                        st.code(traceback.format_exc())
+
+    with col2:
+        export_btn = st.button("📊 Export Results", use_container_width=True)
+
+    with col3:
+        if st.button("🔧 Debug Info", use_container_width=True):
+            st.session_state['show_debug'] = not st.session_state.get('show_debug', False)
+
+else:  # Bulk Upload Mode
+    st.header("📁 Bulk Workload Upload")
+    
+    # Sample Template Information
+    st.markdown("""
+    <div class="sample-template">
+        <h4>📋 CSV Template Format</h4>
+        <p>Your CSV file should contain the following columns:</p>
+        <ul>
+            <li><strong>workload_name</strong> (optional): Name for the workload</li>
+            <li><strong>cpu_cores</strong>: Number of CPU cores</li>
+            <li><strong>peak_cpu_percent</strong>: Peak CPU utilization percentage</li>
+            <li><strong>ram_gb</strong>: RAM in GB</li>
+            <li><strong>peak_ram_percent</strong>: Peak RAM utilization percentage</li>
+            <li><strong>storage_gb</strong>: Current storage in GB</li>
+            <li><strong>growth_rate_percent</strong> (optional): Annual growth rate percentage (default: 20)</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Download template
+    sample_data = pd.DataFrame({
+        'workload_name': ['Web App DB', 'Analytics DB', 'Dev Environment'],
+        'cpu_cores': [8, 16, 4],
+        'peak_cpu_percent': [70, 85, 50],
+        'ram_gb': [32, 64, 16],
+        'peak_ram_percent': [80, 90, 60],
+        'storage_gb': [250, 500, 100],
+        'growth_rate_percent': [20, 30, 10]
+    })
+    
+    csv_template = sample_data.to_csv(index=False)
+    st.download_button(
+        label="📥 Download CSV Template",
+        data=csv_template,
+        file_name="rds_sizing_template.csv",
+        mime="text/csv"
+    )
+    
+    # File Upload
+    st.markdown('<div class="upload-section">', unsafe_allow_html=True)
+    uploaded_file = st.file_uploader(
+        "Choose CSV or Excel file",
+        type=['csv', 'xlsx', 'xls'],
+        help="Upload a file containing multiple workloads to analyze"
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    if uploaded_file is not None:
+        try:
+            # Read the uploaded file
+            if uploaded_file.name.endswith('.csv'):
+                workload_data = pd.read_csv(uploaded_file)
+            else:
+                workload_data = pd.read_excel(uploaded_file)
             
-            try:
-                results = calculator.generate_all_recommendations()
-                st.session_state['results'] = results
-                st.session_state['generation_time'] = time.time() - start_time
+            st.success(f"✅ File uploaded successfully! Found {len(workload_data)} workloads.")
+            
+            # Display preview
+            st.subheader("📊 Data Preview")
+            st.dataframe(workload_data.head(), use_container_width=True)
+            
+            # Validate required columns
+            required_columns = ['cpu_cores', 'peak_cpu_percent', 'ram_gb', 'peak_ram_percent', 'storage_gb']
+            missing_columns = [col for col in required_columns if col not in workload_data.columns]
+            
+            if missing_columns:
+                st.error(f"❌ Missing required columns: {', '.join(missing_columns)}")
+            else:
+                # Process bulk workloads
+                col1, col2 = st.columns([2, 1])
                 
-                # Verify recommendation diversity
-                instance_types = [r.get('instance_type', 'N/A') for r in results.values() if 'error' not in r]
-                unique_types = len(set(instance_types))
+                with col1:
+                    if st.button("🚀 Process All Workloads", type="primary", use_container_width=True):
+                        with st.spinner(f"🔄 Processing {len(workload_data)} workloads..."):
+                            start_time = time.time()
+                            
+                            global_settings = {
+                                "region": region,
+                                "engine": engine,
+                                "deployment": deployment
+                            }
+                            
+                            try:
+                                bulk_results = calculator.process_bulk_workloads(workload_data, global_settings)
+                                st.session_state['bulk_results'] = bulk_results
+                                st.session_state['bulk_generation_time'] = time.time() - start_time
+                                st.session_state['mode'] = 'bulk'
+                                st.session_state['workload_count'] = len(workload_data)
+                                
+                                st.success(f"✅ Processed {len(bulk_results)} workloads successfully!")
+                                
+                            except Exception as e:
+                                st.error(f"❌ Error processing workloads: {str(e)}")
+                                with st.expander("Error Details"):
+                                    st.code(traceback.format_exc())
                 
-                if unique_types == 1 and len(instance_types) > 1:
-                    st.warning(f"⚠️ All environments received same instance type: {instance_types[0]}")
-                else:
-                    st.success(f"✅ Generated diverse recommendations: {unique_types} different instance types")
-                
-            except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
-                with st.expander("Error Details"):
-                    st.code(traceback.format_exc())
+                with col2:
+                    bulk_export_btn = st.button("📊 Export Bulk Results", use_container_width=True)
+        
+        except Exception as e:
+            st.error(f"❌ Error reading file: {str(e)}")
 
-with col2:
-    export_btn = st.button("📊 Export Results", use_container_width=True)
-
-with col3:
-    if st.button("🔧 Debug Info", use_container_width=True):
-        st.session_state['show_debug'] = not st.session_state.get('show_debug', False)
-
-# Display Results
-if 'results' in st.session_state:
+# Display Results based on mode
+if st.session_state.get('mode') == 'single' and 'results' in st.session_state:
     results = st.session_state['results']
     
     # Summary Metrics
@@ -474,11 +623,11 @@ if 'results' in st.session_state:
         # Color-code the dataframe
         def highlight_costs(val):
             if val < 500:
-                return 'background-color: #d4edda'  # Green for low cost
+                return 'background-color: #d4edda'
             elif val < 1500:
-                return 'background-color: #fff3cd'  # Yellow for medium cost
+                return 'background-color: #fff3cd'
             else:
-                return 'background-color: #f8d7da'  # Red for high cost
+                return 'background-color: #f8d7da'
         
         styled_df = df.style.applymap(highlight_costs, subset=['Monthly Cost'])
         st.dataframe(styled_df, use_container_width=True)
@@ -551,24 +700,146 @@ if 'results' in st.session_state:
             for env, result in error_results.items():
                 st.error(f"{env}: {result['error']}")
 
-# Debug Information
-if st.session_state.get('show_debug', False):
-    st.header("🔧 Debug Information")
+elif st.session_state.get('mode') == 'bulk' and 'bulk_results' in st.session_state:
+    bulk_results = st.session_state['bulk_results']
     
-    with st.expander("Calculator Inputs"):
-        st.json(calculator.inputs)
+    # Bulk Summary Metrics
+    st.header("📊 Bulk Processing Summary")
     
-    with st.expander("AWS Status"):
-        st.write(f"AWS Available: {calculator.aws_available}")
-        st.write(f"Region: {calculator.inputs.get('region', 'N/A')}")
-        st.write(f"Engine: {calculator.inputs.get('engine', 'N/A')}")
+    col1, col2, col3, col4 = st.columns(4)
     
-    if 'results' in st.session_state:
-        with st.expander("Raw Results"):
-            st.json(st.session_state['results'])
+    workload_count = st.session_state.get('workload_count', 0)
+    generation_time = st.session_state.get('bulk_generation_time', 0)
+    
+    # Calculate total costs across all workloads for PROD environment
+    total_prod_cost = 0
+    successful_workloads = 0
+    
+    for workload_name, workload_recommendations in bulk_results.items():
+        if 'error' not in workload_recommendations and 'PROD' in workload_recommendations:
+            total_prod_cost += workload_recommendations['PROD'].get('total_cost', 0)
+            successful_workloads += 1
+    
+    with col1:
+        st.markdown(f"""
+        <div class="metric-container">
+            <div class="metric-value">{workload_count}</div>
+            <div class="metric-label">Total Workloads</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div class="metric-container">
+            <div class="metric-value">{successful_workloads}</div>
+            <div class="metric-label">Successful</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown(f"""
+        <div class="metric-container">
+            <div class="metric-value metric-cost">${total_prod_cost:,.0f}</div>
+            <div class="metric-label">Total PROD Cost/Month</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown(f"""
+        <div class="metric-container">
+            <div class="metric-value">{generation_time:.1f}s</div>
+            <div class="metric-label">Processing Time</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Bulk Results Table
+    st.header("📋 Bulk Recommendations Summary")
+    
+    bulk_df_data = []
+    for workload_name, workload_recommendations in bulk_results.items():
+        if 'error' not in workload_recommendations:
+            for env in ['PROD', 'SQA', 'QA', 'DEV']:
+                if env in workload_recommendations:
+                    result = workload_recommendations[env]
+                    bulk_df_data.append({
+                        'Workload': workload_name,
+                        'Environment': env,
+                        'Instance Type': result['instance_type'],
+                        'vCPUs': result['actual_vCPUs'],
+                        'RAM (GB)': result['actual_RAM_GB'],
+                        'Storage (GB)': result['storage_GB'],
+                        'Monthly Cost': result['total_cost']
+                    })
+    
+    if bulk_df_data:
+        bulk_df = pd.DataFrame(bulk_df_data)
+        
+        # Add filtering options
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_workloads = st.multiselect(
+                "Filter Workloads:",
+                options=bulk_df['Workload'].unique(),
+                default=bulk_df['Workload'].unique()
+            )
+        
+        with col2:
+            selected_envs = st.multiselect(
+                "Filter Environments:",
+                options=['PROD', 'SQA', 'QA', 'DEV'],
+                default=['PROD', 'SQA', 'QA', 'DEV']
+            )
+        
+        # Filter dataframe
+        filtered_df = bulk_df[
+            (bulk_df['Workload'].isin(selected_workloads)) & 
+            (bulk_df['Environment'].isin(selected_envs))
+        ]
+        
+        # Display filtered results
+        st.dataframe(filtered_df, use_container_width=True)
+        
+        # Bulk Visualization
+        st.header("📊 Bulk Analysis Charts")
+        
+        # Cost by Workload and Environment
+        fig = px.bar(
+            filtered_df,
+            x='Workload',
+            y='Monthly Cost',
+            color='Environment',
+            title='Monthly Cost by Workload and Environment',
+            barmode='group'
+        )
+        fig.update_layout(xaxis_tickangle=-45)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Instance Type Distribution
+        instance_dist = filtered_df.groupby(['Environment', 'Instance Type']).size().reset_index(name='Count')
+        fig2 = px.sunburst(
+            instance_dist,
+            path=['Environment', 'Instance Type'],
+            values='Count',
+            title='Instance Type Distribution by Environment'
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+        
+        # Cost Summary by Environment
+        cost_summary = filtered_df.groupby('Environment')['Monthly Cost'].agg(['sum', 'mean', 'count']).reset_index()
+        cost_summary.columns = ['Environment', 'Total Cost', 'Average Cost', 'Workload Count']
+        
+        st.subheader("💰 Cost Summary by Environment")
+        st.dataframe(cost_summary, use_container_width=True)
+    
+    # Error Summary for bulk processing
+    error_workloads = {k: v for k, v in bulk_results.items() if 'error' in v}
+    if error_workloads:
+        st.header("❌ Processing Errors")
+        for workload, error_info in error_workloads.items():
+            st.error(f"{workload}: {error_info['error']}")
 
 # Export functionality
-if export_btn and 'results' in st.session_state:
+if st.session_state.get('mode') == 'single' and export_btn and 'results' in st.session_state:
     results = st.session_state['results']
     valid_results = {k: v for k, v in results.items() if 'error' not in v}
     
@@ -593,10 +864,65 @@ if export_btn and 'results' in st.session_state:
             mime="text/csv"
         )
 
+elif st.session_state.get('mode') == 'bulk' and 'bulk_export_btn' in locals() and bulk_export_btn and 'bulk_results' in st.session_state:
+    bulk_results = st.session_state['bulk_results']
+    
+    export_data = []
+    for workload_name, workload_recommendations in bulk_results.items():
+        if 'error' not in workload_recommendations:
+            for env, result in workload_recommendations.items():
+                export_data.append({
+                    'Workload': workload_name,
+                    'Environment': env,
+                    'Instance Type': result['instance_type'],
+                    'Required vCPUs': result['vCPUs'],
+                    'Actual vCPUs': result['actual_vCPUs'],
+                    'Required RAM (GB)': result['RAM_GB'],
+                    'Actual RAM (GB)': result['actual_RAM_GB'],
+                    'Storage (GB)': result['storage_GB'],
+                    'Instance Cost': result['instance_cost'],
+                    'Storage Cost': result['storage_cost'],
+                    'Total Monthly Cost': result['total_cost']
+                })
+    
+    if export_data:
+        export_df = pd.DataFrame(export_data)
+        csv = export_df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Bulk Results CSV",
+            data=csv,
+            file_name=f"rds_bulk_sizing_{engine}_{region}_{int(time.time())}.csv",
+            mime="text/csv"
+        )
+
+# Debug Information
+if st.session_state.get('show_debug', False):
+    st.header("🔧 Debug Information")
+    
+    with st.expander("Calculator Inputs"):
+        st.json(calculator.inputs)
+    
+    with st.expander("AWS Status"):
+        st.write(f"AWS Available: {calculator.aws_available}")
+        st.write(f"Region: {calculator.inputs.get('region', 'N/A')}")
+        st.write(f"Engine: {calculator.inputs.get('engine', 'N/A')}")
+    
+    if st.session_state.get('mode') == 'single' and 'results' in st.session_state:
+        with st.expander("Single Workload Results"):
+            st.json(st.session_state['results'])
+    
+    if st.session_state.get('mode') == 'bulk' and 'bulk_results' in st.session_state:
+        with st.expander("Bulk Results"):
+            st.json(st.session_state['bulk_results'])
+
 # Footer
 st.markdown("---")
 st.markdown("""
-**🎯 Key Improvements:**
+**🎯 Key Features:**
 - ✅ Environment-specific sizing (PROD, SQA, QA, DEV with different resource factors)
-- ✅ Refresh the app to enable real-time pricing
+- ✅ Single workload analysis with detailed recommendations
+- ✅ Bulk upload and processing of multiple workloads
+- ✅ CSV/Excel template download for easy data entry
+- ✅ Comprehensive cost analysis and visualization
+- ✅ Export capabilities for both single and bulk results
 """)
