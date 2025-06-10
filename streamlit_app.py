@@ -8,6 +8,8 @@ from botocore.exceptions import NoCredentialsError, ClientError
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+from io import BytesIO
+import base64
 
 class RealTimeRDSSizingCalculator:
     ENGINES = ['oracle-ee', 'oracle-se', 'postgres', 'aurora-postgresql', 'aurora-mysql', 'sqlserver']
@@ -91,6 +93,7 @@ class RealTimeRDSSizingCalculator:
         self.cache_duration = 3600  # 1 hour cache
         self.recommendations = {}
         self.inputs = {}
+        self.bulk_results = {}
         
         if self.aws_available:
             try:
@@ -117,12 +120,9 @@ class RealTimeRDSSizingCalculator:
         if (cache_key in self.pricing_cache and 
             cache_key in self.cache_timestamp and
             time.time() - self.cache_timestamp[cache_key] < self.cache_duration):
-            st.info(f"📦 Using cached pricing for {engine} in {region}")
             return self.pricing_cache[cache_key]
         
         try:
-            st.info(f"🔄 Fetching real-time pricing for {engine} in {region}...")
-            
             # Map engine names to AWS filter values
             engine_mapping = {
                 'postgres': 'PostgreSQL',
@@ -148,24 +148,17 @@ class RealTimeRDSSizingCalculator:
             
             instances = []
             next_token = None
-            max_pages = 3  # Limit to prevent long waits on Streamlit Cloud
+            max_pages = 3  # Limit to prevent long waits
             page_count = 0
-            
-            # Progress indicator
-            progress_bar = st.progress(0)
-            status_text = st.empty()
             
             while page_count < max_pages:
                 try:
-                    status_text.text(f"Fetching pricing data... Page {page_count + 1}/{max_pages}")
-                    progress_bar.progress((page_count + 1) / max_pages)
-                    
                     if next_token:
                         response = self.pricing_client.get_products(
                             ServiceCode='AmazonRDS',
                             Filters=filters,
                             NextToken=next_token,
-                            MaxResults=50  # Smaller batches for cloud
+                            MaxResults=50
                         )
                     else:
                         response = self.pricing_client.get_products(
@@ -234,12 +227,7 @@ class RealTimeRDSSizingCalculator:
                     page_count += 1
                     
                 except ClientError as e:
-                    st.error(f"AWS API Error: {e}")
                     break
-            
-            # Clear progress indicators
-            progress_bar.empty()
-            status_text.empty()
             
             if instances:
                 # Sort by instance type for consistency
@@ -249,19 +237,15 @@ class RealTimeRDSSizingCalculator:
                 self.pricing_cache[cache_key] = instances
                 self.cache_timestamp[cache_key] = time.time()
                 
-                st.success(f"✅ Fetched {len(instances)} real-time prices for {engine}")
                 return instances
             else:
-                st.warning(f"⚠️ No pricing data found for {engine} in {region}, using fallback")
                 return self._get_fallback_pricing(engine, region)
                 
         except Exception as e:
-            st.error(f"❌ Error fetching real-time pricing: {e}")
             return self._get_fallback_pricing(engine, region)
     
     def _get_fallback_pricing(self, engine, region):
         """Get fallback pricing data when AWS API is not available"""
-        st.info(f"📝 Using fallback pricing for {engine} in {region}")
         
         # Enhanced fallback data
         fallback_data = {
@@ -339,14 +323,14 @@ class RealTimeRDSSizingCalculator:
         else:
             return self._get_fallback_pricing(engine, region)
     
-    def _parse_read_write_ratio(self):
+    def _parse_read_write_ratio(self, workload_pattern=None, read_write_ratio=None):
         """Parse read/write ratio from inputs"""
-        if self.inputs.get("workload_pattern") in self.WORKLOAD_PATTERNS:
-            pattern = self.WORKLOAD_PATTERNS[self.inputs["workload_pattern"]]
+        if workload_pattern and workload_pattern in self.WORKLOAD_PATTERNS:
+            pattern = self.WORKLOAD_PATTERNS[workload_pattern]
             return pattern["read_percentage"], pattern["write_percentage"]
         
         # Parse custom ratio like "60:40"
-        ratio_str = self.inputs.get("read_write_ratio", "60:40")
+        ratio_str = read_write_ratio or "60:40"
         try:
             read_str, write_str = ratio_str.split(":")
             read_pct = int(read_str.strip())
@@ -362,21 +346,24 @@ class RealTimeRDSSizingCalculator:
         except:
             return 60, 40
     
-    def calculate_requirements(self, env):
+    def calculate_requirements(self, env, workload_inputs):
         """Calculate requirements for a specific environment with reader/writer logic"""
         profile = self.ENV_PROFILES[env]
-        deployment_config = self.DEPLOYMENT_OPTIONS[self.inputs["deployment"]]
+        deployment_config = self.DEPLOYMENT_OPTIONS[workload_inputs["deployment"]]
         
         # Calculate base requirements
-        base_vcpus = self.inputs["on_prem_cores"] * (self.inputs["peak_cpu_percent"] / 100)
-        base_ram = self.inputs["on_prem_ram_gb"] * (self.inputs["peak_ram_percent"] / 100)
+        base_vcpus = workload_inputs["on_prem_cores"] * (workload_inputs["peak_cpu_percent"] / 100)
+        base_ram = workload_inputs["on_prem_ram_gb"] * (workload_inputs["peak_ram_percent"] / 100)
         
         # Apply environment-specific factors
         env_vcpus = base_vcpus * profile["cpu_factor"] * profile["performance_headroom"]
         env_ram = base_ram * profile["ram_factor"] * profile["performance_headroom"]
         
         # Calculate read/write workload distribution
-        read_pct, write_pct = self._parse_read_write_ratio()
+        read_pct, write_pct = self._parse_read_write_ratio(
+            workload_inputs.get("workload_pattern"), 
+            workload_inputs.get("read_write_ratio")
+        )
         
         # Calculate writer requirements (handles all writes + some reads)
         writer_cpu_requirement = env_vcpus * (write_pct / 100 + 0.3 * read_pct / 100)
@@ -395,7 +382,7 @@ class RealTimeRDSSizingCalculator:
         final_writer_ram = max(int(writer_ram_requirement), min_reqs["ram"])
         
         # Get available instances (with real-time pricing)
-        instances = self._get_instance_data(self.inputs["engine"], self.inputs["region"])
+        instances = self._get_instance_data(workload_inputs["engine"], workload_inputs["region"])
         
         # Select writer instance
         writer_instance = self._select_instance(final_writer_cpu, final_writer_ram, env, instances, "writer")
@@ -437,15 +424,15 @@ class RealTimeRDSSizingCalculator:
             }
         
         # Calculate storage and costs
-        storage = self._calculate_storage(env)
+        storage = self._calculate_storage(env, workload_inputs)
         costs = self._calculate_costs_with_readers(writer_instance, reader_recommendations, storage, env)
         
         # Generate advisories
-        advisories = self._generate_advisories(writer_instance, reader_recommendations, env, read_pct, write_pct)
+        advisories = self._generate_advisories(writer_instance, reader_recommendations, env, read_pct, write_pct, workload_inputs)
         
         return {
             "environment": env,
-            "deployment_type": self.inputs["deployment"],
+            "deployment_type": workload_inputs["deployment"],
             "workload_pattern": f"{read_pct:.0f}% reads, {write_pct:.0f}% writes",
             
             # Writer information
@@ -518,10 +505,10 @@ class RealTimeRDSSizingCalculator:
             # Cost-optimize for non-production or readers
             return min(suitable, key=lambda x: x["pricing"]["ondemand"])
     
-    def _calculate_storage(self, env):
+    def _calculate_storage(self, env, workload_inputs):
         """Calculate storage requirements"""
         profile = self.ENV_PROFILES[env]
-        base_storage = self.inputs["storage_current_gb"]
+        base_storage = workload_inputs["storage_current_gb"]
         return max(20, int(base_storage * profile["storage_factor"] * 1.3))
     
     def _calculate_costs_with_readers(self, writer_instance, reader_recommendations, storage, env):
@@ -551,7 +538,7 @@ class RealTimeRDSSizingCalculator:
             "total": total_monthly
         }
     
-    def _generate_advisories(self, writer_instance, reader_recommendations, env, read_pct, write_pct):
+    def _generate_advisories(self, writer_instance, reader_recommendations, env, read_pct, write_pct, workload_inputs):
         """Generate optimization advisories"""
         advisories = []
         
@@ -581,7 +568,7 @@ class RealTimeRDSSizingCalculator:
         
         # Environment-specific advisories
         if env == "PROD":
-            if self.inputs.get("deployment") == "Single-AZ":
+            if workload_inputs.get("deployment") == "Single-AZ":
                 advisories.append("🚨 Production should use Multi-AZ deployment for high availability")
             
             if not reader_recommendations:
@@ -596,26 +583,122 @@ class RealTimeRDSSizingCalculator:
                 advisories.append(f"💰 Consider smaller instances or Single-AZ deployment for {env} environment")
         
         # Aurora-specific advisories
-        if "aurora" in self.inputs["engine"] and reader_recommendations:
+        if "aurora" in workload_inputs["engine"] and reader_recommendations:
             advisories.append("🚀 Consider Aurora Auto Scaling for readers based on CPU utilization")
         
         return advisories
     
-    def generate_all_recommendations(self):
+    def generate_all_recommendations(self, workload_inputs=None):
         """Generate recommendations for all environments"""
+        if workload_inputs is None:
+            workload_inputs = self.inputs
+            
         self.recommendations = {}
         
         for env in self.ENV_PROFILES:
             try:
-                self.recommendations[env] = self.calculate_requirements(env)
+                self.recommendations[env] = self.calculate_requirements(env, workload_inputs)
             except Exception as e:
                 self.recommendations[env] = {"error": str(e)}
         
         return self.recommendations
+    
+    def process_bulk_workloads(self, workloads_df):
+        """Process multiple workloads from a DataFrame"""
+        self.bulk_results = {}
+        
+        for index, row in workloads_df.iterrows():
+            workload_name = row.get('workload_name', f'Workload_{index + 1}')
+            
+            try:
+                # Map CSV columns to internal format
+                workload_inputs = {
+                    "region": row.get('region', 'us-east-1'),
+                    "engine": row.get('engine', 'postgres'),
+                    "deployment": row.get('deployment', 'Multi-AZ'),
+                    "workload_pattern": row.get('workload_pattern', 'OLTP_BALANCED'),
+                    "read_write_ratio": row.get('read_write_ratio', '60:40'),
+                    "on_prem_cores": int(row.get('on_prem_cores', 8)),
+                    "peak_cpu_percent": float(row.get('peak_cpu_percent', 70)),
+                    "on_prem_ram_gb": int(row.get('on_prem_ram_gb', 32)),
+                    "peak_ram_percent": float(row.get('peak_ram_percent', 80)),
+                    "storage_current_gb": int(row.get('storage_current_gb', 250)),
+                    "storage_growth_rate": float(row.get('storage_growth_rate', 20)) / 100
+                }
+                
+                # Generate recommendations for this workload
+                workload_recommendations = {}
+                for env in self.ENV_PROFILES:
+                    try:
+                        workload_recommendations[env] = self.calculate_requirements(env, workload_inputs)
+                    except Exception as e:
+                        workload_recommendations[env] = {"error": str(e)}
+                
+                self.bulk_results[workload_name] = {
+                    "inputs": workload_inputs,
+                    "recommendations": workload_recommendations
+                }
+                
+            except Exception as e:
+                self.bulk_results[workload_name] = {
+                    "inputs": {},
+                    "recommendations": {"error": f"Processing error: {str(e)}"}
+                }
+        
+        return self.bulk_results
+
+def get_bulk_template():
+    """Generate a template CSV for bulk upload"""
+    template_data = {
+        'workload_name': ['Web Application', 'Data Warehouse', 'Development DB'],
+        'region': ['us-east-1', 'us-west-2', 'eu-west-1'],
+        'engine': ['postgres', 'aurora-postgresql', 'postgres'],
+        'deployment': ['Multi-AZ', 'Aurora Global', 'Single-AZ'],
+        'workload_pattern': ['OLTP_BALANCED', 'READ_HEAVY', 'MIXED'],
+        'read_write_ratio': ['60:40', '85:15', '50:50'],
+        'on_prem_cores': [16, 32, 4],
+        'peak_cpu_percent': [70, 85, 50],
+        'on_prem_ram_gb': [64, 128, 16],
+        'peak_ram_percent': [75, 80, 60],
+        'storage_current_gb': [500, 2000, 100],
+        'storage_growth_rate': [15, 25, 10]
+    }
+    
+    return pd.DataFrame(template_data)
+
+def create_bulk_results_summary(bulk_results):
+    """Create a summary DataFrame from bulk results"""
+    summary_data = []
+    
+    for workload_name, workload_data in bulk_results.items():
+        recommendations = workload_data.get('recommendations', {})
+        inputs = workload_data.get('inputs', {})
+        
+        for env, result in recommendations.items():
+            if 'error' not in result:
+                row = {
+                    'Workload': workload_name,
+                    'Environment': env,
+                    'Region': inputs.get('region', 'N/A'),
+                    'Engine': inputs.get('engine', 'N/A'),
+                    'Deployment': inputs.get('deployment', 'N/A'),
+                    'Writer Instance': result['writer']['instance_type'],
+                    'Writer Cost': result['instance_cost'],
+                    'Reader Instance': result['readers']['instance_type'] if result.get('readers') else 'None',
+                    'Reader Count': result['readers']['count'] if result.get('readers') else 0,
+                    'Reader Cost': result.get('reader_cost', 0),
+                    'Storage (GB)': result['storage_GB'],
+                    'Storage Cost': result['storage_cost'],
+                    'Total Cost': result['total_cost'],
+                    'Pricing Source': result.get('pricing_source', 'unknown')
+                }
+                summary_data.append(row)
+    
+    return pd.DataFrame(summary_data)
 
 # Configure Streamlit
 st.set_page_config(
-    page_title="AWS RDS Sizing Tool with Real-time Pricing",
+    page_title="AWS RDS Sizing Tool with Bulk Upload",
     layout="wide",
     page_icon="🚀"
 )
@@ -679,6 +762,13 @@ st.markdown("""
         padding: 1rem;
         margin: 1rem 0;
     }
+    .bulk-info {
+        background: #e7f3ff;
+        border: 1px solid #2196f3;
+        border-radius: 4px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -691,7 +781,7 @@ calculator = get_calculator()
 
 # Header
 st.title("🚀 AWS RDS & Aurora Sizing Tool")
-st.markdown("**Enhanced with Real-time Pricing & Reader/Writer sizing**")
+st.markdown("**Enhanced with Real-time Pricing, Reader/Writer sizing & Bulk Upload**")
 
 # Pricing Status Indicator
 if calculator.aws_available:
@@ -706,6 +796,665 @@ else:
         ⚠️ <strong>Real-time AWS Pricing:</strong> DISABLED - Using fallback pricing. Configure AWS credentials for real-time pricing.
     </div>
     """, unsafe_allow_html=True)
+
+# Main tabs
+tab1, tab2 = st.tabs(["🔧 Single Workload Sizing", "📂 Bulk Upload Sizing"])
+
+with tab1:
+    # Single workload sizing (existing functionality)
+    
+    # Sidebar Configuration
+    with st.sidebar:
+        st.header("⚙️ Configuration")
+        
+        # AWS Settings
+        with st.expander("☁️ AWS Settings", expanded=True):
+            region = st.selectbox("Region", [
+                "us-east-1", "us-west-1", "us-west-2", 
+                "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"
+            ], index=0)
+            engine = st.selectbox("Database Engine", calculator.ENGINES, index=2)
+            deployment = st.selectbox("Deployment", list(calculator.DEPLOYMENT_OPTIONS.keys()), index=1)
+            
+            # Show deployment info
+            deployment_info = calculator.DEPLOYMENT_OPTIONS[deployment]
+            st.info(f"📖 {deployment_info['description']}")
+            if deployment_info['has_readers']:
+                st.success(f"👥 Will include {deployment_info['reader_count']} reader instance(s)")
+        
+        # Workload Profile
+        with st.expander("📊 Workload Profile", expanded=True):
+            workload_pattern = st.selectbox(
+                "Workload Pattern", 
+                list(calculator.WORKLOAD_PATTERNS.keys()),
+                index=0,
+                format_func=lambda x: f"{x.replace('_', ' ').title()} ({calculator.WORKLOAD_PATTERNS[x]['read_percentage']}% reads)"
+            )
+            
+            # Custom read/write ratio
+            if workload_pattern == "MIXED":
+                read_write_ratio = st.text_input("Custom Read:Write Ratio", value="50:50")
+            else:
+                pattern_info = calculator.WORKLOAD_PATTERNS[workload_pattern]
+                read_write_ratio = f"{pattern_info['read_percentage']}:{pattern_info['write_percentage']}"
+                st.info(f"📈 {pattern_info['description']}: {read_write_ratio}")
+        
+        # Current Workload
+        with st.expander("🖥️ Current Workload", expanded=True):
+            cores = st.number_input("CPU Cores", min_value=1, max_value=128, value=8, step=1)
+            cpu_util = st.slider("Peak CPU %", 1, 100, 70)
+            ram = st.number_input("RAM (GB)", min_value=1, max_value=1024, value=32, step=1)
+            ram_util = st.slider("Peak RAM %", 1, 100, 80)
+        
+        with st.expander("💾 Storage", expanded=True):
+            storage = st.number_input("Current Storage (GB)", min_value=1, value=250)
+            growth = st.number_input("Annual Growth %", min_value=0, max_value=100, value=20)
+
+    # Update calculator inputs
+    calculator.inputs = {
+        "region": region,
+        "engine": engine,
+        "deployment": deployment,
+        "workload_pattern": workload_pattern,
+        "read_write_ratio": read_write_ratio,
+        "on_prem_cores": cores,
+        "peak_cpu_percent": cpu_util,
+        "on_prem_ram_gb": ram,
+        "peak_ram_percent": ram_util,
+        "storage_current_gb": storage,
+        "storage_growth_rate": growth/100
+    }
+
+    # Main Content
+    col1, col2, col3 = st.columns([2, 1, 1])
+
+    with col1:
+        if st.button("🚀 Generate Sizing with Real-time Pricing", type="primary", use_container_width=True):
+            with st.spinner("🔄 Calculating sizing and fetching pricing..."):
+                start_time = time.time()
+                
+                try:
+                    results = calculator.generate_all_recommendations()
+                    st.session_state['results'] = results
+                    st.session_state['generation_time'] = time.time() - start_time
+                    
+                    # Check if deployment has readers
+                    deployment_config = calculator.DEPLOYMENT_OPTIONS[deployment]
+                    if deployment_config['has_readers']:
+                        st.success(f"✅ Generated recommendations with {deployment_config['reader_count']} reader instance(s)")
+                    else:
+                        st.success("✅ Generated Single-AZ recommendations (no readers)")
+                    
+                    # Show pricing source info
+                    if results:
+                        sample_result = next(iter(results.values()))
+                        if 'error' not in sample_result:
+                            pricing_source = sample_result.get('pricing_source', 'unknown')
+                            if pricing_source == 'AWS_API':
+                                st.success("💡 Using real-time AWS pricing data")
+                            else:
+                                st.info("📝 Using fallback pricing data")
+                    
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    with st.expander("Error Details"):
+                        st.code(traceback.format_exc())
+
+    with col2:
+        if st.button("📊 Export CSV", use_container_width=True):
+            if 'results' in st.session_state:
+                results = st.session_state['results']
+                valid_results = {k: v for k, v in results.items() if 'error' not in v}
+                
+                if valid_results:
+                    export_data = []
+                    for env, result in valid_results.items():
+                        row = {
+                            'Environment': env,
+                            'Deployment': deployment,
+                            'Writer Instance': result['writer']['instance_type'],
+                            'Writer Cost': result['instance_cost'],
+                            'Reader Instance': result['readers']['instance_type'] if result.get('readers') else 'None',
+                            'Reader Count': result['readers']['count'] if result.get('readers') else 0,
+                            'Reader Cost': result.get('reader_cost', 0),
+                            'Total Cost': result['total_cost'],
+                            'Pricing Source': result.get('pricing_source', 'unknown')
+                        }
+                        export_data.append(row)
+                    
+                    df_export = pd.DataFrame(export_data)
+                    csv = df_export.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="📥 Download CSV",
+                        data=csv,
+                        file_name=f"rds_single_sizing_{int(time.time())}.csv",
+                        mime="text/csv"
+                    )
+
+    with col3:
+        if st.button("🔄 Refresh Pricing", use_container_width=True):
+            if calculator.aws_available:
+                calculator.pricing_cache.clear()
+                calculator.cache_timestamp.clear()
+                st.success("✅ Pricing cache cleared - next calculation will fetch fresh data")
+            else:
+                st.warning("⚠️ AWS credentials not configured")
+
+    # Display Results (existing code continues...)
+    if 'results' in st.session_state:
+        results = st.session_state['results']
+        
+        # [Previous result display code remains the same]
+        # Workload Pattern Summary
+        deployment_config = calculator.DEPLOYMENT_OPTIONS[deployment]
+        
+        st.markdown(f"""
+        <div class="workload-info">
+            <h4>🎯 Workload Analysis</h4>
+            <p><strong>Deployment:</strong> {deployment} ({deployment_config['description']})</p>
+            <p><strong>Workload Pattern:</strong> {workload_pattern.replace('_', ' ').title()}</p>
+            <p><strong>Read/Write Distribution:</strong> {read_write_ratio}</p>
+            {f"<p><strong>Reader Instances:</strong> {deployment_config['reader_count']} per environment</p>" if deployment_config['has_readers'] else "<p><strong>Reader Instances:</strong> None (Single-AZ deployment)</p>"}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Summary Metrics
+        st.header("📊 Recommendation Summary")
+        
+        valid_results = {k: v for k, v in results.items() if 'error' not in v}
+        if valid_results:
+            prod_result = valid_results.get('PROD', list(valid_results.values())[0])
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-value">{prod_result['writer']['instance_type']}</div>
+                    <div class="metric-label">Production Writer</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                if prod_result.get('readers'):
+                    reader_info = f"{prod_result['readers']['instance_type']} x{prod_result['readers']['count']}"
+                else:
+                    reader_info = "None"
+                st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-value" style="font-size: 1.5rem;">{reader_info}</div>
+                    <div class="metric-label">Production Readers</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-value">${prod_result['total_cost']:,.0f}</div>
+                    <div class="metric-label">Monthly Cost</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col4:
+                pricing_source = prod_result.get('pricing_source', 'unknown')
+                source_emoji = "🟢" if pricing_source == "AWS_API" else "📝"
+                st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-value">{source_emoji}</div>
+                    <div class="metric-label">{pricing_source.replace('_', ' ').title()}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Enhanced Results Display with Reader/Writer Breakdown
+            st.header("📋 Environment-Specific Recommendations")
+            
+            for env, result in valid_results.items():
+                with st.expander(f"{env} Environment - ${result['total_cost']:,.2f}/month", expanded=True):
+                    
+                    # Pricing source indicator
+                    pricing_source = result.get('pricing_source', 'unknown')
+                    if pricing_source == 'AWS_API':
+                        st.success("✅ Real-time AWS pricing")
+                    else:
+                        st.info("📝 Fallback pricing")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    # Writer Information
+                    with col1:
+                        writer = result['writer']
+                        st.markdown(f"""
+                        <div class="writer-box">
+                            <h4>✍️ Writer Instance</h4>
+                            <p><strong>Instance:</strong> {writer['instance_type']}</p>
+                            <p><strong>vCPUs:</strong> {writer['actual_vCPUs']} (required: {writer['vCPUs']})</p>
+                            <p><strong>RAM:</strong> {writer['actual_RAM_GB']}GB (required: {writer['RAM_GB']}GB)</p>
+                            <p><strong>Monthly Cost:</strong> ${writer['monthly_cost']:,.2f}</p>
+                            <p><strong>Pricing Source:</strong> {writer.get('pricing_source', 'unknown').replace('_', ' ').title()}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Reader Information
+                    with col2:
+                        if result.get('readers'):
+                            readers = result['readers']
+                            st.markdown(f"""
+                            <div class="reader-box">
+                                <h4>📖 Reader Instances</h4>
+                                <p><strong>Instance:</strong> {readers['instance_type']} x{readers['count']}</p>
+                                <p><strong>vCPUs per reader:</strong> {readers['actual_vCPUs']} (required: {readers['vCPUs']})</p>
+                                <p><strong>RAM per reader:</strong> {readers['actual_RAM_GB']}GB (required: {readers['RAM_GB']}GB)</p>
+                                <p><strong>Total vCPUs:</strong> {readers['total_vCPUs']}</p>
+                                <p><strong>Total RAM:</strong> {readers['total_RAM_GB']}GB</p>
+                                <p><strong>Monthly Cost:</strong> ${readers['total_reader_cost']:,.2f}</p>
+                                <p><strong>Pricing Source:</strong> {readers.get('pricing_source', 'unknown').replace('_', ' ').title()}</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
+                            <div class="reader-box">
+                                <h4>📖 Reader Instances</h4>
+                                <p><strong>No readers</strong> (Single-AZ deployment)</p>
+                                <p>All read and write operations handled by the writer instance</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    
+                    # Cost Breakdown
+                    st.subheader("💰 Cost Breakdown")
+                    cost_cols = st.columns(4)
+                    
+                    with cost_cols[0]:
+                        st.metric("Writer", f"${result['instance_cost']:,.2f}")
+                    with cost_cols[1]:
+                        st.metric("Readers", f"${result.get('reader_cost', 0):,.2f}")
+                    with cost_cols[2]:
+                        st.metric("Storage", f"${result['storage_cost']:,.2f}")
+                    with cost_cols[3]:
+                        st.metric("Total", f"${result['total_cost']:,.2f}")
+                    
+                    # Workload Pattern for this environment
+                    st.info(f"🎯 **Workload Pattern:** {result['workload_pattern']}")
+                    
+                    # Advisories for this environment
+                    if result.get('advisories'):
+                        st.subheader("💡 Optimization Advisories")
+                        for advisory in result['advisories']:
+                            if "real-time AWS pricing" in advisory:
+                                st.success(advisory)
+                            elif "fallback pricing" in advisory:
+                                st.warning(advisory)
+                            else:
+                                st.info(advisory)
+            
+            # Charts
+            st.header("📈 Cost Analysis")
+            
+            # Create Plotly charts
+            chart_data = []
+            for env, result in valid_results.items():
+                chart_data.append({
+                    'Environment': env,
+                    'Writer Cost': result['instance_cost'],
+                    'Reader Cost': result.get('reader_cost', 0),
+                    'Storage Cost': result['storage_cost'],
+                    'Total Cost': result['total_cost'],
+                    'Pricing Source': result.get('pricing_source', 'unknown')
+                })
+            
+            df = pd.DataFrame(chart_data)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Stacked bar chart
+                fig = go.Figure()
+                
+                fig.add_trace(go.Bar(
+                    name='Writer',
+                    x=df['Environment'],
+                    y=df['Writer Cost'],
+                    marker_color='#2196F3'
+                ))
+                
+                fig.add_trace(go.Bar(
+                    name='Readers',
+                    x=df['Environment'],
+                    y=df['Reader Cost'],
+                    marker_color='#9C27B0'
+                ))
+                
+                fig.add_trace(go.Bar(
+                    name='Storage',
+                    x=df['Environment'],
+                    y=df['Storage Cost'],
+                    marker_color='#4CAF50'
+                ))
+                
+                fig.update_layout(
+                    title='Cost Breakdown by Environment',
+                    barmode='stack',
+                    xaxis_title='Environment',
+                    yaxis_title='Monthly Cost ($)'
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # Total cost comparison with pricing source indicators
+                colors = ['green' if source == 'AWS_API' else 'orange' for source in df['Pricing Source']]
+                
+                fig2 = go.Figure(data=[
+                    go.Bar(
+                        x=df['Environment'],
+                        y=df['Total Cost'],
+                        marker_color=colors,
+                        text=[f"${cost:,.0f}" for cost in df['Total Cost']],
+                        textposition='auto'
+                    )
+                ])
+                
+                fig2.update_layout(
+                    title='Total Monthly Cost by Environment<br><sub>Green: Real-time | Orange: Fallback</sub>',
+                    xaxis_title='Environment',
+                    yaxis_title='Monthly Cost ($)'
+                )
+                
+                st.plotly_chart(fig2, use_container_width=True)
+            
+            # Error Summary
+            error_results = {k: v for k, v in results.items() if 'error' in v}
+            if error_results:
+                st.header("❌ Errors")
+                for env, result in error_results.items():
+                    st.error(f"{env}: {result['error']}")
+
+with tab2:
+    # Bulk upload sizing
+    st.header("📂 Bulk Workload Sizing")
+    
+    st.markdown("""
+    <div class="bulk-info">
+        <h4>🚀 Bulk Upload Feature</h4>
+        <p>Upload a CSV or Excel file containing multiple workloads to get sizing recommendations for all at once.</p>
+        <p><strong>Benefits:</strong></p>
+        <ul>
+            <li>✅ Process multiple workloads simultaneously</li>
+            <li>✅ Compare costs across different workloads and environments</li>
+            <li>✅ Export comprehensive reports</li>
+            <li>✅ Use real-time AWS pricing for all workloads</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Template download section
+    st.subheader("📄 Download Template")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        template_df = get_bulk_template()
+        
+        csv_template = template_df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download CSV Template",
+            data=csv_template,
+            file_name="rds_bulk_sizing_template.csv",
+            mime="text/csv",
+            help="Download a CSV template with sample workloads"
+        )
+    
+    with col2:
+        # Excel template
+        buffer = BytesIO()
+        template_df.to_excel(buffer, index=False, engine='openpyxl')
+        buffer.seek(0)
+        
+        st.download_button(
+            label="📥 Download Excel Template",
+            data=buffer.getvalue(),
+            file_name="rds_bulk_sizing_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Download an Excel template with sample workloads"
+        )
+    
+    # Show template preview
+    st.subheader("👀 Template Preview")
+    st.dataframe(template_df, use_container_width=True)
+    
+    # File upload section
+    st.subheader("📤 Upload Your Workloads")
+    
+    uploaded_file = st.file_uploader(
+        "Choose a CSV or Excel file",
+        type=['csv', 'xlsx', 'xls'],
+        help="Upload a file with your workload configurations. Use the template above for the correct format."
+    )
+    
+    if uploaded_file is not None:
+        try:
+            # Read the uploaded file
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+            
+            st.success(f"✅ File uploaded successfully! Found {len(df)} workload(s)")
+            
+            # Show uploaded data preview
+            st.subheader("📊 Uploaded Data Preview")
+            st.dataframe(df, use_container_width=True)
+            
+            # Validate required columns
+            required_columns = ['workload_name', 'region', 'engine', 'deployment', 
+                              'on_prem_cores', 'peak_cpu_percent', 'on_prem_ram_gb', 
+                              'peak_ram_percent', 'storage_current_gb']
+            
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            
+            if missing_columns:
+                st.error(f"❌ Missing required columns: {', '.join(missing_columns)}")
+                st.info("Please ensure your file includes all required columns. Download the template for reference.")
+            else:
+                # Process button
+                col1, col2, col3 = st.columns([2, 1, 1])
+                
+                with col1:
+                    if st.button("🚀 Process All Workloads", type="primary", use_container_width=True):
+                        with st.spinner(f"🔄 Processing {len(df)} workload(s) with real-time pricing..."):
+                            start_time = time.time()
+                            
+                            try:
+                                bulk_results = calculator.process_bulk_workloads(df)
+                                st.session_state['bulk_results'] = bulk_results
+                                st.session_state['bulk_generation_time'] = time.time() - start_time
+                                
+                                # Count successful vs failed workloads
+                                successful = sum(1 for workload_data in bulk_results.values() 
+                                               if not any('error' in rec for rec in workload_data.get('recommendations', {}).values()))
+                                
+                                st.success(f"✅ Processed {successful}/{len(df)} workloads successfully in {st.session_state['bulk_generation_time']:.1f} seconds")
+                                
+                                # Show pricing source info
+                                if bulk_results:
+                                    sample_workload = next(iter(bulk_results.values()))
+                                    sample_rec = next(iter(sample_workload.get('recommendations', {}).values()))
+                                    if 'error' not in sample_rec:
+                                        pricing_source = sample_rec.get('pricing_source', 'unknown')
+                                        if pricing_source == 'AWS_API':
+                                            st.success("💡 Using real-time AWS pricing data for all workloads")
+                                        else:
+                                            st.info("📝 Using fallback pricing data for all workloads")
+                                
+                            except Exception as e:
+                                st.error(f"❌ Error processing workloads: {str(e)}")
+                                with st.expander("Error Details"):
+                                    st.code(traceback.format_exc())
+                
+                with col2:
+                    # Export bulk results
+                    if 'bulk_results' in st.session_state:
+                        bulk_results = st.session_state['bulk_results']
+                        summary_df = create_bulk_results_summary(bulk_results)
+                        
+                        if not summary_df.empty:
+                            csv_bulk = summary_df.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Export Results CSV",
+                                data=csv_bulk,
+                                file_name=f"rds_bulk_results_{int(time.time())}.csv",
+                                mime="text/csv",
+                                use_container_width=True
+                            )
+                
+                with col3:
+                    if st.button("🔄 Clear Cache", use_container_width=True):
+                        if calculator.aws_available:
+                            calculator.pricing_cache.clear()
+                            calculator.cache_timestamp.clear()
+                            st.success("✅ Cache cleared")
+                        else:
+                            st.warning("⚠️ AWS not configured")
+        
+        except Exception as e:
+            st.error(f"❌ Error reading file: {str(e)}")
+    
+    # Display bulk results
+    if 'bulk_results' in st.session_state:
+        bulk_results = st.session_state['bulk_results']
+        
+        st.header("📊 Bulk Processing Results")
+        
+        # Summary metrics
+        total_workloads = len(bulk_results)
+        successful_workloads = sum(1 for workload_data in bulk_results.values() 
+                                  if not any('error' in rec for rec in workload_data.get('recommendations', {}).values()))
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Workloads", total_workloads)
+        with col2:
+            st.metric("Successful", successful_workloads)
+        with col3:
+            st.metric("Failed", total_workloads - successful_workloads)
+        with col4:
+            processing_time = st.session_state.get('bulk_generation_time', 0)
+            st.metric("Processing Time", f"{processing_time:.1f}s")
+        
+        # Create summary table
+        summary_df = create_bulk_results_summary(bulk_results)
+        
+        if not summary_df.empty:
+            st.subheader("📋 Results Summary")
+            st.dataframe(summary_df, use_container_width=True)
+            
+            # Cost analysis charts for bulk results
+            st.subheader("📈 Cost Analysis Across Workloads")
+            
+            # Group by environment for comparison
+            fig_bulk = px.bar(
+                summary_df, 
+                x='Workload', 
+                y='Total Cost', 
+                color='Environment',
+                title='Total Monthly Costs by Workload and Environment',
+                text='Total Cost'
+            )
+            fig_bulk.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
+            fig_bulk.update_layout(height=500)
+            st.plotly_chart(fig_bulk, use_container_width=True)
+            
+            # Cost breakdown by workload (Production only)
+            prod_data = summary_df[summary_df['Environment'] == 'PROD']
+            if not prod_data.empty:
+                fig_prod = go.Figure()
+                
+                fig_prod.add_trace(go.Bar(
+                    name='Writer Cost',
+                    x=prod_data['Workload'],
+                    y=prod_data['Writer Cost'],
+                    marker_color='#2196F3'
+                ))
+                
+                fig_prod.add_trace(go.Bar(
+                    name='Reader Cost',
+                    x=prod_data['Workload'],
+                    y=prod_data['Reader Cost'],
+                    marker_color='#9C27B0'
+                ))
+                
+                fig_prod.add_trace(go.Bar(
+                    name='Storage Cost',
+                    x=prod_data['Workload'],
+                    y=prod_data['Storage Cost'],
+                    marker_color='#4CAF50'
+                ))
+                
+                fig_prod.update_layout(
+                    title='Production Environment - Cost Breakdown by Workload',
+                    barmode='stack',
+                    xaxis_title='Workload',
+                    yaxis_title='Monthly Cost ($)',
+                    height=400
+                )
+                
+                st.plotly_chart(fig_prod, use_container_width=True)
+            
+            # Detailed workload results
+            st.subheader("🔍 Detailed Results by Workload")
+            
+            for workload_name, workload_data in bulk_results.items():
+                recommendations = workload_data.get('recommendations', {})
+                inputs = workload_data.get('inputs', {})
+                
+                # Count successful environments for this workload
+                successful_envs = sum(1 for result in recommendations.values() if 'error' not in result)
+                total_envs = len(recommendations)
+                
+                with st.expander(f"🖥️ {workload_name} ({successful_envs}/{total_envs} environments processed)", expanded=False):
+                    
+                    # Show workload configuration
+                    st.subheader("⚙️ Configuration")
+                    config_col1, config_col2 = st.columns(2)
+                    
+                    with config_col1:
+                        st.write(f"**Engine:** {inputs.get('engine', 'N/A')}")
+                        st.write(f"**Region:** {inputs.get('region', 'N/A')}")
+                        st.write(f"**Deployment:** {inputs.get('deployment', 'N/A')}")
+                        st.write(f"**Workload Pattern:** {inputs.get('workload_pattern', 'N/A')}")
+                    
+                    with config_col2:
+                        st.write(f"**CPU Cores:** {inputs.get('on_prem_cores', 'N/A')}")
+                        st.write(f"**Peak CPU:** {inputs.get('peak_cpu_percent', 'N/A')}%")
+                        st.write(f"**RAM:** {inputs.get('on_prem_ram_gb', 'N/A')}GB")
+                        st.write(f"**Storage:** {inputs.get('storage_current_gb', 'N/A')}GB")
+                    
+                    # Show results for each environment
+                    st.subheader("📊 Environment Results")
+                    
+                    for env, result in recommendations.items():
+                        if 'error' not in result:
+                            env_col1, env_col2, env_col3, env_col4 = st.columns(4)
+                            
+                            with env_col1:
+                                st.metric(f"{env} Writer", result['writer']['instance_type'])
+                            with env_col2:
+                                if result.get('readers'):
+                                    reader_info = f"{result['readers']['instance_type']} x{result['readers']['count']}"
+                                else:
+                                    reader_info = "None"
+                                st.metric(f"{env} Readers", reader_info)
+                            with env_col3:
+                                st.metric(f"{env} Total Cost", f"${result['total_cost']:,.2f}")
+                            with env_col4:
+                                pricing_source = result.get('pricing_source', 'unknown')
+                                source_emoji = "🟢" if pricing_source == "AWS_API" else "📝"
+                                st.metric("Pricing", f"{source_emoji} {pricing_source}")
+                        else:
+                            st.error(f"❌ {env}: {result['error']}")
+        
+        else:
+            st.warning("⚠️ No successful results to display")
 
 # AWS Credentials Setup Instructions
 with st.expander("🔧 AWS Credentials Setup for Real-time Pricing"):
@@ -745,381 +1494,22 @@ with st.expander("🔧 AWS Credentials Setup for Real-time Pricing"):
     ```
     """)
 
-# Sidebar Configuration
-with st.sidebar:
-    st.header("⚙️ Configuration")
-    
-    # AWS Settings
-    with st.expander("☁️ AWS Settings", expanded=True):
-        region = st.selectbox("Region", [
-            "us-east-1", "us-west-1", "us-west-2", 
-            "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"
-        ], index=0)
-        engine = st.selectbox("Database Engine", calculator.ENGINES, index=2)
-        deployment = st.selectbox("Deployment", list(calculator.DEPLOYMENT_OPTIONS.keys()), index=1)
-        
-        # Show deployment info
-        deployment_info = calculator.DEPLOYMENT_OPTIONS[deployment]
-        st.info(f"📖 {deployment_info['description']}")
-        if deployment_info['has_readers']:
-            st.success(f"👥 Will include {deployment_info['reader_count']} reader instance(s)")
-    
-    # Workload Profile
-    with st.expander("📊 Workload Profile", expanded=True):
-        workload_pattern = st.selectbox(
-            "Workload Pattern", 
-            list(calculator.WORKLOAD_PATTERNS.keys()),
-            index=0,
-            format_func=lambda x: f"{x.replace('_', ' ').title()} ({calculator.WORKLOAD_PATTERNS[x]['read_percentage']}% reads)"
-        )
-        
-        # Custom read/write ratio
-        if workload_pattern == "MIXED":
-            read_write_ratio = st.text_input("Custom Read:Write Ratio", value="50:50")
-        else:
-            pattern_info = calculator.WORKLOAD_PATTERNS[workload_pattern]
-            read_write_ratio = f"{pattern_info['read_percentage']}:{pattern_info['write_percentage']}"
-            st.info(f"📈 {pattern_info['description']}: {read_write_ratio}")
-    
-    # Current Workload
-    with st.expander("🖥️ Current Workload", expanded=True):
-        cores = st.number_input("CPU Cores", min_value=1, max_value=128, value=8, step=1)
-        cpu_util = st.slider("Peak CPU %", 1, 100, 70)
-        ram = st.number_input("RAM (GB)", min_value=1, max_value=1024, value=32, step=1)
-        ram_util = st.slider("Peak RAM %", 1, 100, 80)
-    
-    with st.expander("💾 Storage", expanded=True):
-        storage = st.number_input("Current Storage (GB)", min_value=1, value=250)
-        growth = st.number_input("Annual Growth %", min_value=0, max_value=100, value=20)
-
-# Update calculator inputs
-calculator.inputs = {
-    "region": region,
-    "engine": engine,
-    "deployment": deployment,
-    "workload_pattern": workload_pattern,
-    "read_write_ratio": read_write_ratio,
-    "on_prem_cores": cores,
-    "peak_cpu_percent": cpu_util,
-    "on_prem_ram_gb": ram,
-    "peak_ram_percent": ram_util,
-    "storage_current_gb": storage,
-    "storage_growth_rate": growth/100
-}
-
-# Main Content
-col1, col2, col3 = st.columns([2, 1, 1])
-
-with col1:
-    if st.button("🚀 Generate Sizing with Real-time Pricing", type="primary", use_container_width=True):
-        with st.spinner("🔄 Calculating sizing and fetching pricing..."):
-            start_time = time.time()
-            
-            try:
-                results = calculator.generate_all_recommendations()
-                st.session_state['results'] = results
-                st.session_state['generation_time'] = time.time() - start_time
-                
-                # Check if deployment has readers
-                deployment_config = calculator.DEPLOYMENT_OPTIONS[deployment]
-                if deployment_config['has_readers']:
-                    st.success(f"✅ Generated recommendations with {deployment_config['reader_count']} reader instance(s)")
-                else:
-                    st.success("✅ Generated Single-AZ recommendations (no readers)")
-                
-                # Show pricing source info
-                if results:
-                    sample_result = next(iter(results.values()))
-                    if 'error' not in sample_result:
-                        pricing_source = sample_result.get('pricing_source', 'unknown')
-                        if pricing_source == 'AWS_API':
-                            st.success("💡 Using real-time AWS pricing data")
-                        else:
-                            st.info("📝 Using fallback pricing data")
-                
-            except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
-                with st.expander("Error Details"):
-                    st.code(traceback.format_exc())
-
-with col2:
-    if st.button("📊 Export CSV", use_container_width=True):
-        if 'results' in st.session_state:
-            results = st.session_state['results']
-            valid_results = {k: v for k, v in results.items() if 'error' not in v}
-            
-            if valid_results:
-                export_data = []
-                for env, result in valid_results.items():
-                    row = {
-                        'Environment': env,
-                        'Deployment': deployment,
-                        'Writer Instance': result['writer']['instance_type'],
-                        'Writer Cost': result['instance_cost'],
-                        'Reader Instance': result['readers']['instance_type'] if result.get('readers') else 'None',
-                        'Reader Count': result['readers']['count'] if result.get('readers') else 0,
-                        'Reader Cost': result.get('reader_cost', 0),
-                        'Total Cost': result['total_cost'],
-                        'Pricing Source': result.get('pricing_source', 'unknown')
-                    }
-                    export_data.append(row)
-                
-                df_export = pd.DataFrame(export_data)
-                csv = df_export.to_csv(index=False)
-                
-                st.download_button(
-                    label="📥 Download CSV",
-                    data=csv,
-                    file_name=f"rds_real_time_pricing_{int(time.time())}.csv",
-                    mime="text/csv"
-                )
-
-with col3:
-    if st.button("🔄 Refresh Pricing", use_container_width=True):
-        if calculator.aws_available:
-            calculator.pricing_cache.clear()
-            calculator.cache_timestamp.clear()
-            st.success("✅ Pricing cache cleared - next calculation will fetch fresh data")
-        else:
-            st.warning("⚠️ AWS credentials not configured")
-
-# Display Results
-if 'results' in st.session_state:
-    results = st.session_state['results']
-    
-    # Workload Pattern Summary
-    deployment_config = calculator.DEPLOYMENT_OPTIONS[deployment]
-    
-    st.markdown(f"""
-    <div class="workload-info">
-        <h4>🎯 Workload Analysis</h4>
-        <p><strong>Deployment:</strong> {deployment} ({deployment_config['description']})</p>
-        <p><strong>Workload Pattern:</strong> {workload_pattern.replace('_', ' ').title()}</p>
-        <p><strong>Read/Write Distribution:</strong> {read_write_ratio}</p>
-        {f"<p><strong>Reader Instances:</strong> {deployment_config['reader_count']} per environment</p>" if deployment_config['has_readers'] else "<p><strong>Reader Instances:</strong> None (Single-AZ deployment)</p>"}
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Summary Metrics
-    st.header("📊 Recommendation Summary")
-    
-    valid_results = {k: v for k, v in results.items() if 'error' not in v}
-    if valid_results:
-        prod_result = valid_results.get('PROD', list(valid_results.values())[0])
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.markdown(f"""
-            <div class="metric-container">
-                <div class="metric-value">{prod_result['writer']['instance_type']}</div>
-                <div class="metric-label">Production Writer</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            if prod_result.get('readers'):
-                reader_info = f"{prod_result['readers']['instance_type']} x{prod_result['readers']['count']}"
-            else:
-                reader_info = "None"
-            st.markdown(f"""
-            <div class="metric-container">
-                <div class="metric-value" style="font-size: 1.5rem;">{reader_info}</div>
-                <div class="metric-label">Production Readers</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown(f"""
-            <div class="metric-container">
-                <div class="metric-value">${prod_result['total_cost']:,.0f}</div>
-                <div class="metric-label">Monthly Cost</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col4:
-            pricing_source = prod_result.get('pricing_source', 'unknown')
-            source_emoji = "🔴" if pricing_source == "AWS_API" else "📝"
-            st.markdown(f"""
-            <div class="metric-container">
-                <div class="metric-value">{source_emoji}</div>
-                <div class="metric-label">{pricing_source.replace('_', ' ').title()}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Enhanced Results Display with Reader/Writer Breakdown
-        st.header("📋 Environment-Specific Recommendations")
-        
-        for env, result in valid_results.items():
-            with st.expander(f"{env} Environment - ${result['total_cost']:,.2f}/month", expanded=True):
-                
-                # Pricing source indicator
-                pricing_source = result.get('pricing_source', 'unknown')
-                if pricing_source == 'AWS_API':
-                    st.success("✅ Real-time AWS pricing")
-                else:
-                    st.info("📝 Fallback pricing")
-                
-                col1, col2 = st.columns(2)
-                
-                # Writer Information
-                with col1:
-                    writer = result['writer']
-                    st.markdown(f"""
-                    <div class="writer-box">
-                        <h4>✍️ Writer Instance</h4>
-                        <p><strong>Instance:</strong> {writer['instance_type']}</p>
-                        <p><strong>vCPUs:</strong> {writer['actual_vCPUs']} (required: {writer['vCPUs']})</p>
-                        <p><strong>RAM:</strong> {writer['actual_RAM_GB']}GB (required: {writer['RAM_GB']}GB)</p>
-                        <p><strong>Monthly Cost:</strong> ${writer['monthly_cost']:,.2f}</p>
-                        <p><strong>Pricing Source:</strong> {writer.get('pricing_source', 'unknown').replace('_', ' ').title()}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                # Reader Information
-                with col2:
-                    if result.get('readers'):
-                        readers = result['readers']
-                        st.markdown(f"""
-                        <div class="reader-box">
-                            <h4>📖 Reader Instances</h4>
-                            <p><strong>Instance:</strong> {readers['instance_type']} x{readers['count']}</p>
-                            <p><strong>vCPUs per reader:</strong> {readers['actual_vCPUs']} (required: {readers['vCPUs']})</p>
-                            <p><strong>RAM per reader:</strong> {readers['actual_RAM_GB']}GB (required: {readers['RAM_GB']}GB)</p>
-                            <p><strong>Total vCPUs:</strong> {readers['total_vCPUs']}</p>
-                            <p><strong>Total RAM:</strong> {readers['total_RAM_GB']}GB</p>
-                            <p><strong>Monthly Cost:</strong> ${readers['total_reader_cost']:,.2f}</p>
-                            <p><strong>Pricing Source:</strong> {readers.get('pricing_source', 'unknown').replace('_', ' ').title()}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"""
-                        <div class="reader-box">
-                            <h4>📖 Reader Instances</h4>
-                            <p><strong>No readers</strong> (Single-AZ deployment)</p>
-                            <p>All read and write operations handled by the writer instance</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                
-                # Cost Breakdown
-                st.subheader("💰 Cost Breakdown")
-                cost_cols = st.columns(4)
-                
-                with cost_cols[0]:
-                    st.metric("Writer", f"${result['instance_cost']:,.2f}")
-                with cost_cols[1]:
-                    st.metric("Readers", f"${result.get('reader_cost', 0):,.2f}")
-                with cost_cols[2]:
-                    st.metric("Storage", f"${result['storage_cost']:,.2f}")
-                with cost_cols[3]:
-                    st.metric("Total", f"${result['total_cost']:,.2f}")
-                
-                # Workload Pattern for this environment
-                st.info(f"🎯 **Workload Pattern:** {result['workload_pattern']}")
-                
-                # Advisories for this environment
-                if result.get('advisories'):
-                    st.subheader("💡 Optimization Advisories")
-                    for advisory in result['advisories']:
-                        if "real-time AWS pricing" in advisory:
-                            st.success(advisory)
-                        elif "fallback pricing" in advisory:
-                            st.warning(advisory)
-                        else:
-                            st.info(advisory)
-        
-        # Charts
-        st.header("📈 Cost Analysis")
-        
-        # Create Plotly charts
-        chart_data = []
-        for env, result in valid_results.items():
-            chart_data.append({
-                'Environment': env,
-                'Writer Cost': result['instance_cost'],
-                'Reader Cost': result.get('reader_cost', 0),
-                'Storage Cost': result['storage_cost'],
-                'Total Cost': result['total_cost'],
-                'Pricing Source': result.get('pricing_source', 'unknown')
-            })
-        
-        df = pd.DataFrame(chart_data)
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Stacked bar chart
-            fig = go.Figure()
-            
-            fig.add_trace(go.Bar(
-                name='Writer',
-                x=df['Environment'],
-                y=df['Writer Cost'],
-                marker_color='#2196F3'
-            ))
-            
-            fig.add_trace(go.Bar(
-                name='Readers',
-                x=df['Environment'],
-                y=df['Reader Cost'],
-                marker_color='#9C27B0'
-            ))
-            
-            fig.add_trace(go.Bar(
-                name='Storage',
-                x=df['Environment'],
-                y=df['Storage Cost'],
-                marker_color='#4CAF50'
-            ))
-            
-            fig.update_layout(
-                title='Cost Breakdown by Environment',
-                barmode='stack',
-                xaxis_title='Environment',
-                yaxis_title='Monthly Cost ($)'
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            # Total cost comparison with pricing source indicators
-            colors = ['green' if source == 'AWS_API' else 'orange' for source in df['Pricing Source']]
-            
-            fig2 = go.Figure(data=[
-                go.Bar(
-                    x=df['Environment'],
-                    y=df['Total Cost'],
-                    marker_color=colors,
-                    text=[f"${cost:,.0f}" for cost in df['Total Cost']],
-                    textposition='auto'
-                )
-            ])
-            
-            fig2.update_layout(
-                title='Total Monthly Cost by Environment<br><sub>Green: Real-time | Orange: Fallback</sub>',
-                xaxis_title='Environment',
-                yaxis_title='Monthly Cost ($)'
-            )
-            
-            st.plotly_chart(fig2, use_container_width=True)
-        
-        # Error Summary
-        error_results = {k: v for k, v in results.items() if 'error' in v}
-        if error_results:
-            st.header("❌ Errors")
-            for env, result in error_results.items():
-                st.error(f"{env}: {result['error']}")
-
 # Footer
 st.markdown("---")
 st.markdown("""
-**🎯 Key Features:**
+**🎯 Enhanced Features:**
+- ✅ **Single & Bulk Workload Processing**: Handle individual workloads or process multiple workloads from CSV/Excel files
 - ✅ **Real-time AWS Pricing**: Live pricing from AWS Pricing API with regional variations
 - ✅ **Reader/Writer Optimization**: Separate sizing for Multi-AZ deployments 
 - ✅ **Smart Caching**: 1-hour cache for performance with manual refresh option
 - ✅ **Fallback Support**: Graceful degradation when AWS API is unavailable
-- ✅ **Cost Visualization**: Interactive charts showing cost breakdowns and trends
+- ✅ **Comprehensive Export**: Export individual or bulk results with detailed cost breakdowns
+- ✅ **Visual Analytics**: Interactive charts for cost comparison and analysis
+- ✅ **Template Support**: Ready-to-use CSV/Excel templates for bulk uploads
 
-**🔧 AWS Configuration:**
-Configure AWS credentials in your app's secrets or environment variables for real-time pricing.
+**🔧 Bulk Upload Benefits:**
+- 📊 Process dozens of workloads simultaneously
+- 💰 Compare costs across different environments and workloads
+- 📈 Generate comprehensive reports and visualizations
+- ⚡ Use real-time AWS pricing for accurate cost estimates
 """)
