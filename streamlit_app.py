@@ -3,30 +3,11 @@ import pandas as pd
 import time
 import traceback
 import json
-
-# Try to import optional dependencies with fallbacks
-try:
-    import plotly.express as px
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-    HAS_PLOTLY = True
-except ImportError:
-    st.warning("⚠️ Plotly not installed. Charts will be simplified. Install with: pip install plotly")
-    HAS_PLOTLY = False
-
-try:
-    import boto3
-    from botocore.exceptions import NoCredentialsError, ClientError
-    HAS_BOTO3 = True
-except ImportError:
-    st.warning("⚠️ Boto3 not installed. Real-time pricing unavailable. Install with: pip install boto3")
-    HAS_BOTO3 = False
-
-try:
-    import numpy as np
-    HAS_NUMPY = True
-except ImportError:
-    HAS_NUMPY = False
+import boto3
+from botocore.exceptions import NoCredentialsError, ClientError
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
 
 class RealTimeRDSSizingCalculator:
     ENGINES = ['oracle-ee', 'oracle-se', 'postgres', 'aurora-postgresql', 'aurora-mysql', 'sqlserver']
@@ -103,7 +84,7 @@ class RealTimeRDSSizingCalculator:
     }
     
     def __init__(self):
-        self.aws_available = self._check_aws_credentials() if HAS_BOTO3 else False
+        self.aws_available = self._check_aws_credentials()
         self.pricing_client = None
         self.pricing_cache = {}
         self.cache_timestamp = {}
@@ -121,8 +102,6 @@ class RealTimeRDSSizingCalculator:
     
     def _check_aws_credentials(self):
         """Check if AWS credentials are available"""
-        if not HAS_BOTO3:
-            return False
         try:
             session = boto3.Session()
             credentials = session.get_credentials()
@@ -172,8 +151,15 @@ class RealTimeRDSSizingCalculator:
             max_pages = 5  # Limit to prevent long waits
             page_count = 0
             
+            # Progress indicator
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
             while page_count < max_pages:
                 try:
+                    status_text.text(f"Fetching pricing data... Page {page_count + 1}/{max_pages}")
+                    progress_bar.progress((page_count + 1) / max_pages)
+                    
                     if next_token:
                         response = self.pricing_client.get_products(
                             ServiceCode='AmazonRDS',
@@ -251,6 +237,10 @@ class RealTimeRDSSizingCalculator:
                     st.error(f"AWS API Error: {e}")
                     break
             
+            # Clear progress indicators
+            progress_bar.empty()
+            status_text.empty()
+            
             if instances:
                 # Sort by instance type for consistency
                 instances.sort(key=lambda x: x['type'])
@@ -281,19 +271,37 @@ class RealTimeRDSSizingCalculator:
                 {"type": "db.t3.medium", "vCPU": 2, "memory": 4, "pricing": {"ondemand": 0.102}, "source": "fallback"},
                 {"type": "db.t3.large", "vCPU": 2, "memory": 8, "pricing": {"ondemand": 0.204}, "source": "fallback"},
                 {"type": "db.t3.xlarge", "vCPU": 4, "memory": 16, "pricing": {"ondemand": 0.408}, "source": "fallback"},
+                {"type": "db.t3.2xlarge", "vCPU": 8, "memory": 32, "pricing": {"ondemand": 0.816}, "source": "fallback"},
                 {"type": "db.m5.large", "vCPU": 2, "memory": 8, "pricing": {"ondemand": 0.192}, "source": "fallback"},
                 {"type": "db.m5.xlarge", "vCPU": 4, "memory": 16, "pricing": {"ondemand": 0.384}, "source": "fallback"},
                 {"type": "db.m5.2xlarge", "vCPU": 8, "memory": 32, "pricing": {"ondemand": 0.768}, "source": "fallback"},
+                {"type": "db.m5.4xlarge", "vCPU": 16, "memory": 64, "pricing": {"ondemand": 1.536}, "source": "fallback"},
                 {"type": "db.r5.large", "vCPU": 2, "memory": 16, "pricing": {"ondemand": 0.24}, "source": "fallback"},
                 {"type": "db.r5.xlarge", "vCPU": 4, "memory": 32, "pricing": {"ondemand": 0.48}, "source": "fallback"},
                 {"type": "db.r5.2xlarge", "vCPU": 8, "memory": 64, "pricing": {"ondemand": 0.96}, "source": "fallback"},
+                {"type": "db.r5.4xlarge", "vCPU": 16, "memory": 128, "pricing": {"ondemand": 1.92}, "source": "fallback"},
             ],
             "aurora-postgresql": [
                 {"type": "db.t3.medium", "vCPU": 2, "memory": 4, "pricing": {"ondemand": 0.082}, "source": "fallback"},
+                {"type": "db.t4g.medium", "vCPU": 2, "memory": 4, "pricing": {"ondemand": 0.073}, "source": "fallback"},
                 {"type": "db.r5.large", "vCPU": 2, "memory": 16, "pricing": {"ondemand": 0.285}, "source": "fallback"},
                 {"type": "db.r5.xlarge", "vCPU": 4, "memory": 32, "pricing": {"ondemand": 0.57}, "source": "fallback"},
                 {"type": "db.r5.2xlarge", "vCPU": 8, "memory": 64, "pricing": {"ondemand": 1.14}, "source": "fallback"},
+                {"type": "db.r5.4xlarge", "vCPU": 16, "memory": 128, "pricing": {"ondemand": 2.28}, "source": "fallback"},
                 {"type": "db.r6g.large", "vCPU": 2, "memory": 16, "pricing": {"ondemand": 0.256}, "source": "fallback"},
+                {"type": "db.r6g.xlarge", "vCPU": 4, "memory": 32, "pricing": {"ondemand": 0.512}, "source": "fallback"},
+                {"type": "db.r6g.2xlarge", "vCPU": 8, "memory": 64, "pricing": {"ondemand": 1.024}, "source": "fallback"},
+            ],
+            "oracle-ee": [
+                {"type": "db.t3.medium", "vCPU": 2, "memory": 4, "pricing": {"ondemand": 0.272}, "source": "fallback"},
+                {"type": "db.t3.large", "vCPU": 2, "memory": 8, "pricing": {"ondemand": 0.544}, "source": "fallback"},
+                {"type": "db.m5.large", "vCPU": 2, "memory": 8, "pricing": {"ondemand": 0.475}, "source": "fallback"},
+                {"type": "db.m5.xlarge", "vCPU": 4, "memory": 16, "pricing": {"ondemand": 0.95}, "source": "fallback"},
+                {"type": "db.m5.2xlarge", "vCPU": 8, "memory": 32, "pricing": {"ondemand": 1.90}, "source": "fallback"},
+                {"type": "db.m5.4xlarge", "vCPU": 16, "memory": 64, "pricing": {"ondemand": 3.80}, "source": "fallback"},
+                {"type": "db.r5.large", "vCPU": 2, "memory": 16, "pricing": {"ondemand": 0.60}, "source": "fallback"},
+                {"type": "db.r5.xlarge", "vCPU": 4, "memory": 32, "pricing": {"ondemand": 1.20}, "source": "fallback"},
+                {"type": "db.r5.2xlarge", "vCPU": 8, "memory": 64, "pricing": {"ondemand": 2.40}, "source": "fallback"},
             ]
         }
         
@@ -306,7 +314,9 @@ class RealTimeRDSSizingCalculator:
             "us-west-1": 1.08,
             "us-west-2": 1.08,
             "eu-west-1": 1.15,
-            "ap-southeast-1": 1.20
+            "ap-southeast-1": 1.20,
+            "ap-northeast-1": 1.18,
+            "eu-central-1": 1.12
         }
         
         multiplier = region_multipliers.get(region, 1.1)
@@ -610,7 +620,7 @@ st.set_page_config(
     page_icon="🚀"
 )
 
-# Custom CSS (keeping the same as before)
+# Custom CSS
 st.markdown("""
 <style>
     .main > div {
@@ -662,6 +672,13 @@ st.markdown("""
         margin: 0.5rem 0;
         font-size: 0.9rem;
     }
+    .setup-info {
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        border-radius: 4px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -685,7 +702,7 @@ if calculator.aws_available:
     """, unsafe_allow_html=True)
 else:
     st.markdown("""
-    <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 0.5rem; margin: 0.5rem 0; font-size: 0.9rem;">
+    <div class="setup-info">
         ⚠️ <strong>Real-time AWS Pricing:</strong> DISABLED - Using fallback pricing. Configure AWS credentials for real-time pricing.
     </div>
     """, unsafe_allow_html=True)
@@ -693,9 +710,9 @@ else:
 # AWS Credentials Setup Instructions
 with st.expander("🔧 AWS Credentials Setup for Real-time Pricing"):
     st.markdown("""
-    To enable real-time pricing, configure AWS credentials:
+    To enable real-time pricing, configure AWS credentials using one of these methods:
     
-    **Option 1: AWS CLI**
+    **Option 1: AWS CLI (Recommended)**
     ```bash
     aws configure
     ```
@@ -710,7 +727,7 @@ with st.expander("🔧 AWS Credentials Setup for Real-time Pricing"):
     **Option 3: IAM Role (if running on EC2)**
     - Attach an IAM role with `pricing:GetProducts` permission
     
-    **Required Permissions:**
+    **Required IAM Permissions:**
     ```json
     {
         "Version": "2012-10-17",
@@ -726,29 +743,15 @@ with st.expander("🔧 AWS Credentials Setup for Real-time Pricing"):
         ]
     }
     ```
-    """)
-
-# Dependency status
-col1, col2 = st.columns([3, 1])
-with col1:
-    deps_status = []
-    if not HAS_PLOTLY:
-        deps_status.append("📊 Plotly (for advanced charts)")
-    if not HAS_BOTO3:
-        deps_status.append("☁️ Boto3 (for real-time pricing)")
     
-    if deps_status:
-        st.warning(f"⚠️ Optional features unavailable: {', '.join(deps_status)}")
-        st.info("💡 Install missing packages: pip install plotly boto3")
-    else:
-        st.success("✅ All dependencies available")
-
-with col2:
-    if st.button("📦 Install Dependencies"):
-        st.code("pip install streamlit pandas plotly boto3 numpy")
-
-# Rest of the Streamlit interface remains the same as before...
-# (continuing with sidebar configuration, main content, etc.)
+    **Test Your Setup:**
+    ```python
+    import boto3
+    pricing = boto3.client('pricing', region_name='us-east-1')
+    response = pricing.describe_services(ServiceCode='AmazonRDS', MaxResults=1)
+    print("✅ AWS Pricing API access confirmed!")
+    ```
+    """)
 
 # Sidebar Configuration
 with st.sidebar:
@@ -756,7 +759,10 @@ with st.sidebar:
     
     # AWS Settings
     with st.expander("☁️ AWS Settings", expanded=True):
-        region = st.selectbox("Region", ["us-east-1", "us-west-1", "us-west-2", "eu-west-1"], index=0)
+        region = st.selectbox("Region", [
+            "us-east-1", "us-west-1", "us-west-2", 
+            "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"
+        ], index=0)
         engine = st.selectbox("Database Engine", calculator.ENGINES, index=2)
         deployment = st.selectbox("Deployment", list(calculator.DEPLOYMENT_OPTIONS.keys()), index=1)
         
@@ -813,7 +819,7 @@ calculator.inputs = {
 col1, col2, col3 = st.columns([2, 1, 1])
 
 with col1:
-    if st.button("🚀 Generate Real-time Pricing", type="primary", use_container_width=True):
+    if st.button("🚀 Generate Sizing with Real-time Pricing", type="primary", use_container_width=True):
         with st.spinner("🔄 Fetching real-time pricing and calculating sizing..."):
             start_time = time.time()
             
@@ -835,89 +841,48 @@ with col1:
                     if 'error' not in sample_result:
                         pricing_source = sample_result.get('pricing_source', 'unknown')
                         if pricing_source == 'AWS_API':
-                            st.info("💡 Pricing sourced from real-time AWS Pricing API")
+                            st.success("💡 Using real-time AWS pricing data")
                         else:
-                            st.warning("⚠️ Using fallback pricing - real-time pricing unavailable")
+                            st.info("📝 Using fallback pricing data")
                 
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
                 with st.expander("Error Details"):
                     st.code(traceback.format_exc())
 
-# Rest of the interface remains similar but with enhanced pricing source indicators
-# Display Results section would show pricing source for each recommendation
-if 'results' in st.session_state:
-    results = st.session_state['results']
-    
-    # Enhanced Results Display with Pricing Source Information
-    st.header("📋 Environment-Specific Recommendations with Real-time Pricing")
-    
-    valid_results = {k: v for k, v in results.items() if 'error' not in v}
-    
-    for env, result in valid_results.items():
-        with st.expander(f"{env} Environment - ${result['total_cost']:,.2f}/month", expanded=True):
-            
-            # Pricing source indicator
-            pricing_source = result.get('pricing_source', 'unknown')
-            if pricing_source == 'AWS_API':
-                st.success("✅ Real-time AWS pricing")
-            else:
-                st.warning("⚠️ Fallback pricing")
-            
-            col1, col2 = st.columns(2)
-            
-            # Writer Information
-            with col1:
-                writer = result['writer']
-                st.markdown(f"""
-                <div class="writer-box">
-                    <h4>✍️ Writer Instance</h4>
-                    <p><strong>Instance:</strong> {writer['instance_type']}</p>
-                    <p><strong>vCPUs:</strong> {writer['actual_vCPUs']} (required: {writer['vCPUs']})</p>
-                    <p><strong>RAM:</strong> {writer['actual_RAM_GB']}GB (required: {writer['RAM_GB']}GB)</p>
-                    <p><strong>Monthly Cost:</strong> ${writer['monthly_cost']:,.2f}</p>
-                    <p><strong>Pricing Source:</strong> {writer.get('pricing_source', 'unknown')}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Reader Information
-            with col2:
-                if result.get('readers'):
-                    readers = result['readers']
-                    st.markdown(f"""
-                    <div class="reader-box">
-                        <h4>📖 Reader Instances</h4>
-                        <p><strong>Instance:</strong> {readers['instance_type']} x{readers['count']}</p>
-                        <p><strong>vCPUs per reader:</strong> {readers['actual_vCPUs']} (required: {readers['vCPUs']})</p>
-                        <p><strong>RAM per reader:</strong> {readers['actual_RAM_GB']}GB (required: {readers['RAM_GB']}GB)</p>
-                        <p><strong>Total vCPUs:</strong> {readers['total_vCPUs']}</p>
-                        <p><strong>Total RAM:</strong> {readers['total_RAM_GB']}GB</p>
-                        <p><strong>Monthly Cost:</strong> ${readers['total_reader_cost']:,.2f}</p>
-                        <p><strong>Pricing Source:</strong> {readers.get('pricing_source', 'unknown')}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""
-                    <div class="reader-box">
-                        <h4>📖 Reader Instances</h4>
-                        <p><strong>No readers</strong> (Single-AZ deployment)</p>
-                        <p>All read and write operations handled by the writer instance</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            # Show advisories with pricing information
-            if result.get('advisories'):
-                st.subheader("💡 Optimization Advisories")
-                for advisory in result['advisories']:
-                    if "real-time AWS pricing" in advisory:
-                        st.success(advisory)
-                    elif "fallback pricing" in advisory:
-                        st.warning(advisory)
-                    else:
-                        st.info(advisory)
-
-# Add a refresh pricing button
 with col2:
+    if st.button("📊 Export CSV", use_container_width=True):
+        if 'results' in st.session_state:
+            results = st.session_state['results']
+            valid_results = {k: v for k, v in results.items() if 'error' not in v}
+            
+            if valid_results:
+                export_data = []
+                for env, result in valid_results.items():
+                    row = {
+                        'Environment': env,
+                        'Deployment': deployment,
+                        'Writer Instance': result['writer']['instance_type'],
+                        'Writer Cost': result['instance_cost'],
+                        'Reader Instance': result['readers']['instance_type'] if result.get('readers') else 'None',
+                        'Reader Count': result['readers']['count'] if result.get('readers') else 0,
+                        'Reader Cost': result.get('reader_cost', 0),
+                        'Total Cost': result['total_cost'],
+                        'Pricing Source': result.get('pricing_source', 'unknown')
+                    }
+                    export_data.append(row)
+                
+                df_export = pd.DataFrame(export_data)
+                csv = df_export.to_csv(index=False)
+                
+                st.download_button(
+                    label="📥 Download CSV",
+                    data=csv,
+                    file_name=f"rds_real_time_pricing_{int(time.time())}.csv",
+                    mime="text/csv"
+                )
+
+with col3:
     if st.button("🔄 Refresh Pricing", use_container_width=True):
         if calculator.aws_available:
             calculator.pricing_cache.clear()
@@ -926,18 +891,250 @@ with col2:
         else:
             st.warning("⚠️ AWS credentials not configured")
 
-# Footer with enhanced information
+# Display Results
+if 'results' in st.session_state:
+    results = st.session_state['results']
+    
+    # Workload Pattern Summary
+    deployment_config = calculator.DEPLOYMENT_OPTIONS[deployment]
+    
+    st.markdown(f"""
+    <div class="workload-info">
+        <h4>🎯 Workload Analysis</h4>
+        <p><strong>Deployment:</strong> {deployment} ({deployment_config['description']})</p>
+        <p><strong>Workload Pattern:</strong> {workload_pattern.replace('_', ' ').title()}</p>
+        <p><strong>Read/Write Distribution:</strong> {read_write_ratio}</p>
+        {f"<p><strong>Reader Instances:</strong> {deployment_config['reader_count']} per environment</p>" if deployment_config['has_readers'] else "<p><strong>Reader Instances:</strong> None (Single-AZ deployment)</p>"}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Summary Metrics
+    st.header("📊 Recommendation Summary")
+    
+    valid_results = {k: v for k, v in results.items() if 'error' not in v}
+    if valid_results:
+        prod_result = valid_results.get('PROD', list(valid_results.values())[0])
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown(f"""
+            <div class="metric-container">
+                <div class="metric-value">{prod_result['writer']['instance_type']}</div>
+                <div class="metric-label">Production Writer</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            if prod_result.get('readers'):
+                reader_info = f"{prod_result['readers']['instance_type']} x{prod_result['readers']['count']}"
+            else:
+                reader_info = "None"
+            st.markdown(f"""
+            <div class="metric-container">
+                <div class="metric-value" style="font-size: 1.5rem;">{reader_info}</div>
+                <div class="metric-label">Production Readers</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+            <div class="metric-container">
+                <div class="metric-value">${prod_result['total_cost']:,.0f}</div>
+                <div class="metric-label">Monthly Cost</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            generation_time = st.session_state.get('generation_time', 0)
+            pricing_source = prod_result.get('pricing_source', 'unknown')
+            source_emoji = "🔴" if pricing_source == "AWS_API" else "📝"
+            st.markdown(f"""
+            <div class="metric-container">
+                <div class="metric-value">{source_emoji}</div>
+                <div class="metric-label">{pricing_source.replace('_', ' ').title()}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Enhanced Results Display with Reader/Writer Breakdown
+        st.header("📋 Environment-Specific Recommendations")
+        
+        for env, result in valid_results.items():
+            with st.expander(f"{env} Environment - ${result['total_cost']:,.2f}/month", expanded=True):
+                
+                # Pricing source indicator
+                pricing_source = result.get('pricing_source', 'unknown')
+                if pricing_source == 'AWS_API':
+                    st.success("✅ Real-time AWS pricing")
+                else:
+                    st.info("📝 Fallback pricing")
+                
+                col1, col2 = st.columns(2)
+                
+                # Writer Information
+                with col1:
+                    writer = result['writer']
+                    st.markdown(f"""
+                    <div class="writer-box">
+                        <h4>✍️ Writer Instance</h4>
+                        <p><strong>Instance:</strong> {writer['instance_type']}</p>
+                        <p><strong>vCPUs:</strong> {writer['actual_vCPUs']} (required: {writer['vCPUs']})</p>
+                        <p><strong>RAM:</strong> {writer['actual_RAM_GB']}GB (required: {writer['RAM_GB']}GB)</p>
+                        <p><strong>Monthly Cost:</strong> ${writer['monthly_cost']:,.2f}</p>
+                        <p><strong>Pricing Source:</strong> {writer.get('pricing_source', 'unknown').replace('_', ' ').title()}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # Reader Information
+                with col2:
+                    if result.get('readers'):
+                        readers = result['readers']
+                        st.markdown(f"""
+                        <div class="reader-box">
+                            <h4>📖 Reader Instances</h4>
+                            <p><strong>Instance:</strong> {readers['instance_type']} x{readers['count']}</p>
+                            <p><strong>vCPUs per reader:</strong> {readers['actual_vCPUs']} (required: {readers['vCPUs']})</p>
+                            <p><strong>RAM per reader:</strong> {readers['actual_RAM_GB']}GB (required: {readers['RAM_GB']}GB)</p>
+                            <p><strong>Total vCPUs:</strong> {readers['total_vCPUs']}</p>
+                            <p><strong>Total RAM:</strong> {readers['total_RAM_GB']}GB</p>
+                            <p><strong>Monthly Cost:</strong> ${readers['total_reader_cost']:,.2f}</p>
+                            <p><strong>Pricing Source:</strong> {readers.get('pricing_source', 'unknown').replace('_', ' ').title()}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div class="reader-box">
+                            <h4>📖 Reader Instances</h4>
+                            <p><strong>No readers</strong> (Single-AZ deployment)</p>
+                            <p>All read and write operations handled by the writer instance</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                # Cost Breakdown
+                st.subheader("💰 Cost Breakdown")
+                cost_cols = st.columns(4)
+                
+                with cost_cols[0]:
+                    st.metric("Writer", f"${result['instance_cost']:,.2f}")
+                with cost_cols[1]:
+                    st.metric("Readers", f"${result.get('reader_cost', 0):,.2f}")
+                with cost_cols[2]:
+                    st.metric("Storage", f"${result['storage_cost']:,.2f}")
+                with cost_cols[3]:
+                    st.metric("Total", f"${result['total_cost']:,.2f}")
+                
+                # Workload Pattern for this environment
+                st.info(f"🎯 **Workload Pattern:** {result['workload_pattern']}")
+                
+                # Advisories for this environment
+                if result.get('advisories'):
+                    st.subheader("💡 Optimization Advisories")
+                    for advisory in result['advisories']:
+                        if "real-time AWS pricing" in advisory:
+                            st.success(advisory)
+                        elif "fallback pricing" in advisory:
+                            st.warning(advisory)
+                        else:
+                            st.info(advisory)
+        
+        # Charts
+        st.header("📈 Cost Analysis")
+        
+        # Create Plotly charts
+        chart_data = []
+        for env, result in valid_results.items():
+            chart_data.append({
+                'Environment': env,
+                'Writer Cost': result['instance_cost'],
+                'Reader Cost': result.get('reader_cost', 0),
+                'Storage Cost': result['storage_cost'],
+                'Total Cost': result['total_cost'],
+                'Pricing Source': result.get('pricing_source', 'unknown')
+            })
+        
+        df = pd.DataFrame(chart_data)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Stacked bar chart
+            fig = go.Figure()
+            
+            fig.add_trace(go.Bar(
+                name='Writer',
+                x=df['Environment'],
+                y=df['Writer Cost'],
+                marker_color='#2196F3'
+            ))
+            
+            fig.add_trace(go.Bar(
+                name='Readers',
+                x=df['Environment'],
+                y=df['Reader Cost'],
+                marker_color='#9C27B0'
+            ))
+            
+            fig.add_trace(go.Bar(
+                name='Storage',
+                x=df['Environment'],
+                y=df['Storage Cost'],
+                marker_color='#4CAF50'
+            ))
+            
+            fig.update_layout(
+                title='Cost Breakdown by Environment',
+                barmode='stack',
+                xaxis_title='Environment',
+                yaxis_title='Monthly Cost ($)'
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            # Total cost comparison with pricing source indicators
+            colors = ['green' if source == 'AWS_API' else 'orange' for source in df['Pricing Source']]
+            
+            fig2 = go.Figure(data=[
+                go.Bar(
+                    x=df['Environment'],
+                    y=df['Total Cost'],
+                    marker_color=colors,
+                    text=[f"${cost:,.0f}" for cost in df['Total Cost']],
+                    textposition='auto'
+                )
+            ])
+            
+            fig2.update_layout(
+                title='Total Monthly Cost by Environment<br><sub>Green: Real-time | Orange: Fallback</sub>',
+                xaxis_title='Environment',
+                yaxis_title='Monthly Cost ($)'
+            )
+            
+            st.plotly_chart(fig2, use_container_width=True)
+        
+        # Error Summary
+        error_results = {k: v for k, v in results.items() if 'error' in v}
+        if error_results:
+            st.header("❌ Errors")
+            for env, result in error_results.items():
+                st.error(f"{env}: {result['error']}")
+
+# Footer
 st.markdown("---")
 st.markdown("""
-**🎯 Real-time Pricing Features:**
-- ✅ **Live AWS Pricing**: Fetches current On-Demand pricing directly from AWS Pricing API
-- ✅ **Smart Caching**: 1-hour cache to balance freshness with performance
-- ✅ **Region-Specific**: Accurate pricing for your selected AWS region
+**🎯 Key Features:**
+- ✅ **Real-time AWS Pricing**: Live pricing from AWS Pricing API with regional variations
+- ✅ **Reader/Writer Optimization**: Separate sizing for Multi-AZ deployments 
+- ✅ **Smart Caching**: 1-hour cache for performance with manual refresh option
 - ✅ **Fallback Support**: Graceful degradation when AWS API is unavailable
-- ✅ **Pricing Source Tracking**: Clear indication of whether prices are real-time or fallback
+- ✅ **Cost Visualization**: Interactive charts showing cost breakdowns and trends
 
-**📦 Setup Requirements:**
-- Install boto3: `pip install boto3`
-- Configure AWS credentials with `pricing:GetProducts` permission
-- Ensure internet connectivity to AWS Pricing API (us-east-1)
+**📦 Installation:**
+```bash
+pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
+
+**🔧 AWS Setup:**
+Configure AWS credentials with `pricing:GetProducts` permission for real-time pricing.
 """)
