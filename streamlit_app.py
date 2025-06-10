@@ -1120,8 +1120,6 @@ if 'results' in st.session_state:
                 st.error(f"{env}: {result['error']}")
 
 # Footer
-st.markdown("---")
-st.markdown("""
 **🎯 Key Features:**
 - ✅ **Real-time AWS Pricing**: Live pricing from AWS Pricing API with regional variations
 - ✅ **Reader/Writer Optimization**: Separate sizing for Multi-AZ deployments 
@@ -1129,12 +1127,5 @@ st.markdown("""
 - ✅ **Fallback Support**: Graceful degradation when AWS API is unavailable
 - ✅ **Cost Visualization**: Interactive charts showing cost breakdowns and trends
 
-**📦 Installation:**
-```bash
-pip install -r requirements.txt
-streamlit run streamlit_app.py
-```
-
-**🔧 AWS Setup:**
-Configure AWS credentials with `pricing:GetProducts` permission for real-time pricing.
-""")
+**🔧 AWS Configuration:**
+Configure AWS credentials in your app's secrets or environment variables for real-time pricing.
