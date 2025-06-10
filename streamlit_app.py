@@ -1120,12 +1120,13 @@ if 'results' in st.session_state:
                 st.error(f"{env}: {result['error']}")
 
 # Footer
+st.markdown("---")
+st.markdown("""
 **🎯 Key Features:**
 - ✅ **Real-time AWS Pricing**: Live pricing from AWS Pricing API with regional variations
 - ✅ **Reader/Writer Optimization**: Separate sizing for Multi-AZ deployments 
 - ✅ **Smart Caching**: 1-hour cache for performance with manual refresh option
 - ✅ **Fallback Support**: Graceful degradation when AWS API is unavailable
 - ✅ **Cost Visualization**: Interactive charts showing cost breakdowns and trends
-
-**🔧 AWS Configuration:**
-Configure AWS credentials in your app's secrets or environment variables for real-time pricing.
+ 
+""")
