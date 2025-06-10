@@ -7,6 +7,7 @@ import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import numpy as np
 from io import BytesIO
 import base64
@@ -696,9 +697,355 @@ def create_bulk_results_summary(bulk_results):
     
     return pd.DataFrame(summary_data)
 
+def create_workload_charts(inputs):
+    """Create workload visualization charts"""
+    
+    # Read/Write Workload Distribution Pie Chart
+    read_pct, write_pct = 60, 40
+    if inputs.get("workload_pattern") and inputs["workload_pattern"] in calculator.WORKLOAD_PATTERNS:
+        pattern = calculator.WORKLOAD_PATTERNS[inputs["workload_pattern"]]
+        read_pct = pattern["read_percentage"]
+        write_pct = pattern["write_percentage"]
+    
+    fig_workload = go.Figure(data=[go.Pie(
+        labels=['Read Operations', 'Write Operations'],
+        values=[read_pct, write_pct],
+        hole=.3,
+        marker_colors=['#36A2EB', '#FF6384'],
+        textinfo='label+percent',
+        textfont_size=14
+    )])
+    
+    fig_workload.update_layout(
+        title={
+            'text': f"📊 Workload Distribution - {inputs.get('workload_pattern', 'BALANCED').replace('_', ' ').title()}",
+            'x': 0.5,
+            'font': {'size': 16}
+        },
+        showlegend=True,
+        font=dict(size=12),
+        height=350
+    )
+    
+    return fig_workload
+
+def create_utilization_gauges(inputs):
+    """Create CPU and RAM utilization gauge charts"""
+    
+    fig = make_subplots(
+        rows=1, cols=2,
+        specs=[[{"type": "indicator"}, {"type": "indicator"}]],
+        subplot_titles=["CPU Utilization", "RAM Utilization"]
+    )
+    
+    # CPU Gauge
+    fig.add_trace(go.Indicator(
+        mode="gauge+number+delta",
+        value=inputs.get("peak_cpu_percent", 70),
+        domain={'x': [0, 1], 'y': [0, 1]},
+        title={'text': "Peak CPU %"},
+        gauge={
+            'axis': {'range': [None, 100]},
+            'bar': {'color': "#1f77b4"},
+            'steps': [
+                {'range': [0, 50], 'color': "#d4edda"},
+                {'range': [50, 75], 'color': "#fff3cd"},
+                {'range': [75, 100], 'color': "#f8d7da"}
+            ],
+            'threshold': {
+                'line': {'color': "red", 'width': 4},
+                'thickness': 0.75,
+                'value': 90
+            }
+        }
+    ), row=1, col=1)
+    
+    # RAM Gauge
+    fig.add_trace(go.Indicator(
+        mode="gauge+number+delta",
+        value=inputs.get("peak_ram_percent", 80),
+        domain={'x': [0, 1], 'y': [0, 1]},
+        title={'text': "Peak RAM %"},
+        gauge={
+            'axis': {'range': [None, 100]},
+            'bar': {'color': "#ff7f0e"},
+            'steps': [
+                {'range': [0, 60], 'color': "#d4edda"},
+                {'range': [60, 80], 'color': "#fff3cd"},
+                {'range': [80, 100], 'color': "#f8d7da"}
+            ],
+            'threshold': {
+                'line': {'color': "red", 'width': 4},
+                'thickness': 0.75,
+                'value': 90
+            }
+        }
+    ), row=1, col=2)
+    
+    fig.update_layout(
+        title={
+            'text': "⚡ Current Resource Utilization",
+            'x': 0.5,
+            'font': {'size': 16}
+        },
+        height=350,
+        font=dict(size=12)
+    )
+    
+    return fig
+
+def create_storage_projection_chart(inputs):
+    """Create storage growth projection chart"""
+    
+    current_storage = inputs.get("storage_current_gb", 250)
+    growth_rate = inputs.get("storage_growth_rate", 0.2)
+    
+    # Project 5 years into the future
+    months = list(range(0, 61, 6))  # Every 6 months for 5 years
+    storage_values = [current_storage * ((1 + growth_rate) ** (month / 12)) for month in months]
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=months,
+        y=storage_values,
+        mode='lines+markers',
+        name='Projected Storage',
+        line=dict(color='#2E8B57', width=3),
+        marker=dict(size=8),
+        fill='tonexty',
+        fillcolor='rgba(46, 139, 87, 0.1)'
+    ))
+    
+    # Add current point
+    fig.add_trace(go.Scatter(
+        x=[0],
+        y=[current_storage],
+        mode='markers',
+        name='Current Storage',
+        marker=dict(size=12, color='red', symbol='diamond')
+    ))
+    
+    fig.update_layout(
+        title={
+            'text': f"💾 Storage Growth Projection ({growth_rate*100:.0f}% annual growth)",
+            'x': 0.5,
+            'font': {'size': 16}
+        },
+        xaxis_title="Months from Now",
+        yaxis_title="Storage (GB)",
+        showlegend=True,
+        height=350,
+        font=dict(size=12)
+    )
+    
+    return fig
+
+def create_cost_breakdown_pie(result):
+    """Create cost breakdown pie chart for a single environment"""
+    
+    labels = ['Writer Instance', 'Storage', 'Backup']
+    values = [result['instance_cost'], result['storage_cost'], result['storage_cost'] * 0.25]
+    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
+    
+    if result.get('reader_cost', 0) > 0:
+        labels.insert(1, 'Reader Instances')
+        values.insert(1, result['reader_cost'])
+        colors.insert(1, '#96CEB4')
+    
+    fig = go.Figure(data=[go.Pie(
+        labels=labels,
+        values=values,
+        hole=.4,
+        marker_colors=colors,
+        textinfo='label+percent+value',
+        texttemplate='%{label}<br>%{percent}<br>$%{value:,.0f}',
+        textfont_size=10
+    )])
+    
+    fig.update_layout(
+        title={
+            'text': f"💰 Cost Breakdown - {result['environment']} Environment",
+            'x': 0.5,
+            'font': {'size': 14}
+        },
+        showlegend=True,
+        height=300,
+        font=dict(size=10)
+    )
+    
+    return fig
+
+def create_environment_comparison_radar(results):
+    """Create radar chart comparing environments"""
+    
+    valid_results = {k: v for k, v in results.items() if 'error' not in v}
+    if len(valid_results) < 2:
+        return None
+    
+    categories = ['Cost Score', 'Performance Score', 'Storage Score', 'Reliability Score']
+    
+    fig = go.Figure()
+    
+    # Normalize scores (0-100 scale)
+    max_cost = max(result['total_cost'] for result in valid_results.values())
+    
+    for env, result in valid_results.items():
+        # Calculate normalized scores
+        cost_score = 100 - (result['total_cost'] / max_cost * 100)  # Lower cost = higher score
+        performance_score = min(100, (result['writer']['actual_vCPUs'] / result['writer']['vCPUs']) * 100)
+        storage_score = min(100, (result['storage_GB'] / 1000) * 100)  # Arbitrary scaling
+        reliability_score = 90 if result.get('readers') else 70  # Multi-AZ gets higher score
+        
+        scores = [cost_score, performance_score, storage_score, reliability_score]
+        
+        fig.add_trace(go.Scatterpolar(
+            r=scores,
+            theta=categories,
+            fill='toself',
+            name=env,
+            line=dict(width=2)
+        ))
+    
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100]
+            )),
+        title={
+            'text': "🎯 Environment Comparison Radar",
+            'x': 0.5,
+            'font': {'size': 16}
+        },
+        showlegend=True,
+        height=400
+    )
+    
+    return fig
+
+def create_instance_comparison_chart(results):
+    """Create instance comparison chart"""
+    
+    valid_results = {k: v for k, v in results.items() if 'error' not in v}
+    
+    data = []
+    for env, result in valid_results.items():
+        data.append({
+            'Environment': env,
+            'Instance Type': result['writer']['instance_type'],
+            'vCPUs': result['writer']['actual_vCPUs'],
+            'RAM (GB)': result['writer']['actual_RAM_GB'],
+            'Monthly Cost': result['instance_cost'],
+            'Has Readers': 'Yes' if result.get('readers') else 'No',
+            'Reader Count': result['readers']['count'] if result.get('readers') else 0
+        })
+    
+    df = pd.DataFrame(data)
+    
+    # Create scatter plot: vCPUs vs RAM, sized by cost, colored by environment
+    fig = px.scatter(
+        df, 
+        x='vCPUs', 
+        y='RAM (GB)',
+        size='Monthly Cost',
+        color='Environment',
+        hover_data=['Instance Type', 'Monthly Cost', 'Has Readers'],
+        title="💻 Instance Specifications Comparison",
+        size_max=30
+    )
+    
+    fig.update_layout(
+        height=400,
+        font=dict(size=12),
+        title={'x': 0.5, 'font': {'size': 16}}
+    )
+    
+    return fig
+
+def create_bulk_cost_heatmap(bulk_results):
+    """Create cost heatmap for bulk results"""
+    
+    # Prepare data for heatmap
+    workloads = []
+    environments = ['DEV', 'QA', 'SQA', 'PROD']
+    cost_matrix = []
+    
+    for workload_name, workload_data in bulk_results.items():
+        recommendations = workload_data.get('recommendations', {})
+        workloads.append(workload_name)
+        
+        row = []
+        for env in environments:
+            if env in recommendations and 'error' not in recommendations[env]:
+                cost = recommendations[env]['total_cost']
+                row.append(cost)
+            else:
+                row.append(0)
+        cost_matrix.append(row)
+    
+    if not cost_matrix:
+        return None
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=cost_matrix,
+        x=environments,
+        y=workloads,
+        colorscale='RdYlBu_r',
+        text=[[f'${cost:,.0f}' if cost > 0 else 'N/A' for cost in row] for row in cost_matrix],
+        texttemplate='%{text}',
+        textfont={"size": 10},
+        colorbar=dict(title="Monthly Cost ($)")
+    ))
+    
+    fig.update_layout(
+        title={
+            'text': "🔥 Cost Heatmap - All Workloads vs Environments",
+            'x': 0.5,
+            'font': {'size': 16}
+        },
+        xaxis_title="Environment",
+        yaxis_title="Workload",
+        height=max(300, len(workloads) * 50),
+        font=dict(size=12)
+    )
+    
+    return fig
+
+def create_deployment_comparison_pie():
+    """Create deployment options comparison"""
+    
+    deployment_data = []
+    for deployment, config in calculator.DEPLOYMENT_OPTIONS.items():
+        deployment_data.append({
+            'Deployment': deployment,
+            'Cost Multiplier': config['cost_multiplier'],
+            'Reader Count': config['reader_count'],
+            'Description': config['description']
+        })
+    
+    df = pd.DataFrame(deployment_data)
+    
+    fig = px.pie(
+        df,
+        values='Cost Multiplier',
+        names='Deployment',
+        title="🏗️ Deployment Options - Relative Cost Impact",
+        hover_data=['Reader Count', 'Description']
+    )
+    
+    fig.update_traces(textposition='inside', textinfo='percent+label')
+    fig.update_layout(
+        height=350,
+        font=dict(size=12),
+        title={'x': 0.5, 'font': {'size': 16}}
+    )
+    
+    return fig
+
 # Configure Streamlit
 st.set_page_config(
-    page_title="AWS RDS Sizing Tool with Bulk Upload",
+    page_title="AWS RDS Sizing Tool with Advanced Analytics",
     layout="wide",
     page_icon="🚀"
 )
@@ -769,6 +1116,14 @@ st.markdown("""
         padding: 1rem;
         margin: 1rem 0;
     }
+    .chart-container {
+        background: #ffffff;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -781,7 +1136,7 @@ calculator = get_calculator()
 
 # Header
 st.title("🚀 AWS RDS & Aurora Sizing Tool")
-st.markdown("**Enhanced with Real-time Pricing, Reader/Writer sizing & Bulk Upload**")
+st.markdown("**Enhanced with Real-time Pricing, Advanced Analytics & Interactive Visualizations**")
 
 # Pricing Status Indicator
 if calculator.aws_available:
@@ -798,7 +1153,7 @@ else:
     """, unsafe_allow_html=True)
 
 # Main tabs
-tab1, tab2 = st.tabs(["🔧 Single Workload Sizing", "📂 Bulk Upload Sizing"])
+tab1, tab2, tab3 = st.tabs(["🔧 Single Workload Sizing", "📂 Bulk Upload Sizing", "📊 Analytics Dashboard"])
 
 with tab1:
     # Single workload sizing (existing functionality)
@@ -864,6 +1219,29 @@ with tab1:
         "storage_current_gb": storage,
         "storage_growth_rate": growth/100
     }
+
+    # Pre-calculation visualizations
+    st.header("📊 Workload Analysis")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        workload_chart = create_workload_charts(calculator.inputs)
+        st.plotly_chart(workload_chart, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        utilization_chart = create_utilization_gauges(calculator.inputs)
+        st.plotly_chart(utilization_chart, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        storage_chart = create_storage_projection_chart(calculator.inputs)
+        st.plotly_chart(storage_chart, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # Main Content
     col1, col2, col3 = st.columns([2, 1, 1])
@@ -941,11 +1319,10 @@ with tab1:
             else:
                 st.warning("⚠️ AWS credentials not configured")
 
-    # Display Results (existing code continues...)
+    # Display Results with Enhanced Visualizations
     if 'results' in st.session_state:
         results = st.session_state['results']
         
-        # [Previous result display code remains the same]
         # Workload Pattern Summary
         deployment_config = calculator.DEPLOYMENT_OPTIONS[deployment]
         
@@ -1005,6 +1382,36 @@ with tab1:
                     <div class="metric-label">{pricing_source.replace('_', ' ').title()}</div>
                 </div>
                 """, unsafe_allow_html=True)
+            
+            # Enhanced Visualizations Section
+            st.header("📈 Advanced Analytics & Visualizations")
+            
+            # Row 1: Environment comparison and instance analysis
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                radar_chart = create_environment_comparison_radar(valid_results)
+                if radar_chart:
+                    st.plotly_chart(radar_chart, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                instance_chart = create_instance_comparison_chart(valid_results)
+                st.plotly_chart(instance_chart, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Row 2: Cost breakdown pies for each environment
+            st.subheader("💰 Cost Breakdown by Environment")
+            
+            env_cols = st.columns(len(valid_results))
+            for idx, (env, result) in enumerate(valid_results.items()):
+                with env_cols[idx]:
+                    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                    cost_pie = create_cost_breakdown_pie(result)
+                    st.plotly_chart(cost_pie, use_container_width=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
             
             # Enhanced Results Display with Reader/Writer Breakdown
             st.header("📋 Environment-Specific Recommendations")
@@ -1087,8 +1494,8 @@ with tab1:
                             else:
                                 st.info(advisory)
             
-            # Charts
-            st.header("📈 Cost Analysis")
+            # Enhanced Charts Section
+            st.header("📈 Enhanced Cost Analysis")
             
             # Create Plotly charts
             chart_data = []
@@ -1107,6 +1514,7 @@ with tab1:
             col1, col2 = st.columns(2)
             
             with col1:
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
                 # Stacked bar chart
                 fig = go.Figure()
                 
@@ -1132,15 +1540,19 @@ with tab1:
                 ))
                 
                 fig.update_layout(
-                    title='Cost Breakdown by Environment',
+                    title='💸 Cost Breakdown by Environment',
                     barmode='stack',
                     xaxis_title='Environment',
-                    yaxis_title='Monthly Cost ($)'
+                    yaxis_title='Monthly Cost ($)',
+                    font=dict(size=12),
+                    title_x=0.5
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
             
             with col2:
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
                 # Total cost comparison with pricing source indicators
                 colors = ['green' if source == 'AWS_API' else 'orange' for source in df['Pricing Source']]
                 
@@ -1155,12 +1567,15 @@ with tab1:
                 ])
                 
                 fig2.update_layout(
-                    title='Total Monthly Cost by Environment<br><sub>Green: Real-time | Orange: Fallback</sub>',
+                    title='💰 Total Monthly Cost by Environment<br><sub>Green: Real-time | Orange: Fallback</sub>',
                     xaxis_title='Environment',
-                    yaxis_title='Monthly Cost ($)'
+                    yaxis_title='Monthly Cost ($)',
+                    font=dict(size=12),
+                    title_x=0.5
                 )
                 
                 st.plotly_chart(fig2, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
             
             # Error Summary
             error_results = {k: v for k, v in results.items() if 'error' in v}
@@ -1170,7 +1585,7 @@ with tab1:
                     st.error(f"{env}: {result['error']}")
 
 with tab2:
-    # Bulk upload sizing
+    # Bulk upload sizing (existing functionality but enhanced with more charts)
     st.header("📂 Bulk Workload Sizing")
     
     st.markdown("""
@@ -1181,7 +1596,7 @@ with tab2:
         <ul>
             <li>✅ Process multiple workloads simultaneously</li>
             <li>✅ Compare costs across different workloads and environments</li>
-            <li>✅ Export comprehensive reports</li>
+            <li>✅ Export comprehensive reports with advanced visualizations</li>
             <li>✅ Use real-time AWS pricing for all workloads</li>
         </ul>
     </div>
@@ -1318,7 +1733,7 @@ with tab2:
         except Exception as e:
             st.error(f"❌ Error reading file: {str(e)}")
     
-    # Display bulk results
+    # Display bulk results with enhanced visualizations
     if 'bulk_results' in st.session_state:
         bulk_results = st.session_state['bulk_results']
         
@@ -1341,6 +1756,16 @@ with tab2:
             processing_time = st.session_state.get('bulk_generation_time', 0)
             st.metric("Processing Time", f"{processing_time:.1f}s")
         
+        # Enhanced visualizations for bulk results
+        st.header("📈 Advanced Bulk Analytics")
+        
+        # Cost Heatmap
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        heatmap_chart = create_bulk_cost_heatmap(bulk_results)
+        if heatmap_chart:
+            st.plotly_chart(heatmap_chart, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
         # Create summary table
         summary_df = create_bulk_results_summary(bulk_results)
         
@@ -1348,25 +1773,53 @@ with tab2:
             st.subheader("📋 Results Summary")
             st.dataframe(summary_df, use_container_width=True)
             
-            # Cost analysis charts for bulk results
-            st.subheader("📈 Cost Analysis Across Workloads")
+            # Enhanced cost analysis charts for bulk results
+            st.subheader("📈 Enhanced Cost Analysis Across Workloads")
             
-            # Group by environment for comparison
-            fig_bulk = px.bar(
-                summary_df, 
-                x='Workload', 
-                y='Total Cost', 
-                color='Environment',
-                title='Total Monthly Costs by Workload and Environment',
-                text='Total Cost'
-            )
-            fig_bulk.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
-            fig_bulk.update_layout(height=500)
-            st.plotly_chart(fig_bulk, use_container_width=True)
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                # Group by environment for comparison
+                fig_bulk = px.bar(
+                    summary_df, 
+                    x='Workload', 
+                    y='Total Cost', 
+                    color='Environment',
+                    title='💰 Total Monthly Costs by Workload and Environment',
+                    text='Total Cost'
+                )
+                fig_bulk.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
+                fig_bulk.update_layout(
+                    height=500,
+                    font=dict(size=12),
+                    title_x=0.5
+                )
+                st.plotly_chart(fig_bulk, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                # Workload distribution by engine
+                engine_dist = summary_df.groupby('Engine')['Total Cost'].mean().reset_index()
+                fig_engine = px.pie(
+                    engine_dist,
+                    values='Total Cost',
+                    names='Engine',
+                    title='🔧 Average Cost Distribution by Engine Type'
+                )
+                fig_engine.update_layout(
+                    height=500,
+                    font=dict(size=12),
+                    title_x=0.5
+                )
+                st.plotly_chart(fig_engine, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
             
             # Cost breakdown by workload (Production only)
             prod_data = summary_df[summary_df['Environment'] == 'PROD']
             if not prod_data.empty:
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
                 fig_prod = go.Figure()
                 
                 fig_prod.add_trace(go.Bar(
@@ -1391,14 +1844,38 @@ with tab2:
                 ))
                 
                 fig_prod.update_layout(
-                    title='Production Environment - Cost Breakdown by Workload',
+                    title='🏭 Production Environment - Cost Breakdown by Workload',
                     barmode='stack',
                     xaxis_title='Workload',
                     yaxis_title='Monthly Cost ($)',
-                    height=400
+                    height=400,
+                    font=dict(size=12),
+                    title_x=0.5
                 )
                 
                 st.plotly_chart(fig_prod, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Regional cost comparison
+            region_data = summary_df.groupby(['Region', 'Environment'])['Total Cost'].mean().reset_index()
+            if len(region_data['Region'].unique()) > 1:
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                fig_region = px.bar(
+                    region_data,
+                    x='Region',
+                    y='Total Cost',
+                    color='Environment',
+                    title='🌍 Average Costs by Region and Environment',
+                    text='Total Cost'
+                )
+                fig_region.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
+                fig_region.update_layout(
+                    height=400,
+                    font=dict(size=12),
+                    title_x=0.5
+                )
+                st.plotly_chart(fig_region, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
             
             # Detailed workload results
             st.subheader("🔍 Detailed Results by Workload")
@@ -1456,6 +1933,374 @@ with tab2:
         else:
             st.warning("⚠️ No successful results to display")
 
+with tab3:
+    # New Analytics Dashboard
+    st.header("📊 Analytics Dashboard")
+    
+    st.markdown("""
+    <div class="chart-container">
+        <h4>📈 Global Analytics & Insights</h4>
+        <p>Comprehensive analytics dashboard providing insights into deployment options, pricing trends, and optimization opportunities.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Deployment options overview
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        deployment_chart = create_deployment_comparison_pie()
+        st.plotly_chart(deployment_chart, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        # Workload patterns distribution
+        pattern_data = []
+        for pattern, info in calculator.WORKLOAD_PATTERNS.items():
+            pattern_data.append({
+                'Pattern': pattern.replace('_', ' ').title(),
+                'Read %': info['read_percentage'],
+                'Write %': info['write_percentage']
+            })
+        
+        pattern_df = pd.DataFrame(pattern_data)
+        
+        fig_patterns = go.Figure()
+        
+        fig_patterns.add_trace(go.Bar(
+            name='Read %',
+            x=pattern_df['Pattern'],
+            y=pattern_df['Read %'],
+            marker_color='#36A2EB'
+        ))
+        
+        fig_patterns.add_trace(go.Bar(
+            name='Write %',
+            x=pattern_df['Pattern'],
+            y=pattern_df['Write %'],
+            marker_color='#FF6384'
+        ))
+        
+        fig_patterns.update_layout(
+            title='📊 Workload Pattern Characteristics',
+            barmode='stack',
+            xaxis_title='Pattern Type',
+            yaxis_title='Percentage (%)',
+            font=dict(size=12),
+            title_x=0.5,
+            height=350
+        )
+        
+        st.plotly_chart(fig_patterns, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Environment factors comparison
+    st.subheader("🏗️ Environment Scaling Factors")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        # Environment scaling factors
+        env_data = []
+        for env, profile in calculator.ENV_PROFILES.items():
+            env_data.append({
+                'Environment': env,
+                'CPU Factor': profile['cpu_factor'],
+                'RAM Factor': profile['ram_factor'],
+                'Storage Factor': profile['storage_factor'],
+                'Performance Headroom': profile['performance_headroom']
+            })
+        
+        env_df = pd.DataFrame(env_data)
+        
+        fig_env = go.Figure()
+        
+        for factor in ['CPU Factor', 'RAM Factor', 'Storage Factor', 'Performance Headroom']:
+            fig_env.add_trace(go.Scatter(
+                x=env_df['Environment'],
+                y=env_df[factor],
+                mode='lines+markers',
+                name=factor,
+                line=dict(width=3),
+                marker=dict(size=8)
+            ))
+        
+        fig_env.update_layout(
+            title='⚖️ Environment Scaling Factors',
+            xaxis_title='Environment',
+            yaxis_title='Factor Value',
+            font=dict(size=12),
+            title_x=0.5,
+            height=350
+        )
+        
+        st.plotly_chart(fig_env, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        # Cost efficiency analysis
+        efficiency_data = []
+        for env, profile in calculator.ENV_PROFILES.items():
+            # Calculate efficiency score (inverse of factors - lower resource usage = higher efficiency)
+            efficiency_score = (2 - profile['cpu_factor']) * (2 - profile['ram_factor']) * (2 - profile['storage_factor'])
+            efficiency_data.append({
+                'Environment': env,
+                'Efficiency Score': efficiency_score,
+                'Resource Usage': profile['cpu_factor'] + profile['ram_factor'] + profile['storage_factor']
+            })
+        
+        efficiency_df = pd.DataFrame(efficiency_data)
+        
+        fig_efficiency = px.scatter(
+            efficiency_df,
+            x='Resource Usage',
+            y='Efficiency Score',
+            size='Efficiency Score',
+            color='Environment',
+            title='⚡ Environment Efficiency Analysis',
+            hover_data=['Environment'],
+            size_max=30
+        )
+        
+        fig_efficiency.update_layout(
+            font=dict(size=12),
+            title_x=0.5,
+            height=350
+        )
+        
+        st.plotly_chart(fig_efficiency, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Regional cost comparison (simulated)
+    st.subheader("🌍 Regional Cost Analysis")
+    
+    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+    
+    # Create sample regional cost data
+    regions = ["us-east-1", "us-west-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"]
+    instance_types = ["db.t3.medium", "db.m5.large", "db.r5.large", "db.r5.xlarge"]
+    
+    regional_data = []
+    for region in regions:
+        for instance in instance_types:
+            # Simulate base cost with regional multipliers
+            base_cost = {"db.t3.medium": 102, "db.m5.large": 192, "db.r5.large": 240, "db.r5.xlarge": 480}[instance]
+            multipliers = {
+                "us-east-1": 1.0, "us-west-1": 1.08, "us-west-2": 1.08,
+                "eu-west-1": 1.15, "eu-central-1": 1.12,
+                "ap-southeast-1": 1.20, "ap-northeast-1": 1.18
+            }
+            cost = base_cost * multipliers[region]
+            
+            regional_data.append({
+                'Region': region,
+                'Instance Type': instance,
+                'Monthly Cost': cost
+            })
+    
+    regional_df = pd.DataFrame(regional_data)
+    
+    fig_regional = px.bar(
+        regional_df,
+        x='Region',
+        y='Monthly Cost',
+        color='Instance Type',
+        title='💸 Regional Cost Comparison by Instance Type',
+        text='Monthly Cost'
+    )
+    
+    fig_regional.update_traces(texttemplate='$%{text:.0f}', textposition='outside')
+    fig_regional.update_layout(
+        height=500,
+        font=dict(size=12),
+        title_x=0.5,
+        xaxis_tickangle=-45
+    )
+    
+    st.plotly_chart(fig_regional, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Engine comparison analysis
+    st.subheader("🔧 Database Engine Analysis")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        # Engine licensing comparison
+        engine_info = [
+            {'Engine': 'PostgreSQL', 'License Cost': 'Free', 'Relative Cost': 1.0, 'Use Case': 'General Purpose'},
+            {'Engine': 'Aurora PostgreSQL', 'License Cost': 'Free', 'Relative Cost': 1.2, 'Use Case': 'Cloud Native'},
+            {'Engine': 'Aurora MySQL', 'License Cost': 'Free', 'Relative Cost': 1.1, 'Use Case': 'Web Apps'},
+            {'Engine': 'Oracle EE', 'License Cost': 'High', 'Relative Cost': 3.5, 'Use Case': 'Enterprise'},
+            {'Engine': 'Oracle SE', 'License Cost': 'Medium', 'Relative Cost': 2.0, 'Use Case': 'Business'},
+            {'Engine': 'SQL Server', 'License Cost': 'Medium', 'Relative Cost': 2.2, 'Use Case': 'Microsoft Stack'}
+        ]
+        
+        engine_df = pd.DataFrame(engine_info)
+        
+        fig_engines = px.pie(
+            engine_df,
+            values='Relative Cost',
+            names='Engine',
+            title='🔧 Engine Cost Distribution',
+            hover_data=['License Cost', 'Use Case']
+        )
+        
+        fig_engines.update_traces(textposition='inside', textinfo='percent+label')
+        fig_engines.update_layout(
+            height=400,
+            font=dict(size=10),
+            title_x=0.5
+        )
+        
+        st.plotly_chart(fig_engines, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        # Performance vs Cost analysis
+        performance_data = [
+            {'Engine': 'PostgreSQL', 'Performance Score': 85, 'Cost Score': 95, 'Popularity': 90},
+            {'Engine': 'Aurora PostgreSQL', 'Performance Score': 95, 'Cost Score': 80, 'Popularity': 85},
+            {'Engine': 'Aurora MySQL', 'Performance Score': 90, 'Cost Score': 85, 'Popularity': 80},
+            {'Engine': 'Oracle EE', 'Performance Score': 100, 'Cost Score': 40, 'Popularity': 60},
+            {'Engine': 'Oracle SE', 'Performance Score': 90, 'Cost Score': 60, 'Popularity': 50},
+            {'Engine': 'SQL Server', 'Performance Score': 88, 'Cost Score': 55, 'Popularity': 70}
+        ]
+        
+        perf_df = pd.DataFrame(performance_data)
+        
+        fig_perf = px.scatter(
+            perf_df,
+            x='Cost Score',
+            y='Performance Score',
+            size='Popularity',
+            color='Engine',
+            title='⚡ Engine Performance vs Cost Analysis',
+            size_max=25,
+            hover_data=['Engine', 'Popularity']
+        )
+        
+        fig_perf.update_layout(
+            height=400,
+            font=dict(size=12),
+            title_x=0.5
+        )
+        
+        st.plotly_chart(fig_perf, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Storage growth projection analysis
+    st.subheader("💾 Storage Growth Impact Analysis")
+    
+    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+    
+    # Create storage growth scenarios
+    growth_rates = [10, 15, 20, 25, 30, 40, 50]
+    initial_storage = 250
+    years = 5
+    
+    growth_data = []
+    for rate in growth_rates:
+        final_storage = initial_storage * ((1 + rate/100) ** years)
+        storage_cost_monthly = final_storage * 0.10
+        annual_storage_cost = storage_cost_monthly * 12
+        
+        growth_data.append({
+            'Growth Rate (%)': rate,
+            'Final Storage (GB)': final_storage,
+            'Monthly Storage Cost': storage_cost_monthly,
+            'Annual Storage Cost': annual_storage_cost
+        })
+    
+    growth_df = pd.DataFrame(growth_data)
+    
+    fig_growth = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=["Storage Size Growth", "Cost Impact"],
+        specs=[[{"secondary_y": False}, {"secondary_y": False}]]
+    )
+    
+    # Storage growth
+    fig_growth.add_trace(
+        go.Scatter(
+            x=growth_df['Growth Rate (%)'],
+            y=growth_df['Final Storage (GB)'],
+            mode='lines+markers',
+            name='Storage Size',
+            line=dict(color='#2E8B57', width=3),
+            marker=dict(size=8)
+        ),
+        row=1, col=1
+    )
+    
+    # Cost impact
+    fig_growth.add_trace(
+        go.Scatter(
+            x=growth_df['Growth Rate (%)'],
+            y=growth_df['Annual Storage Cost'],
+            mode='lines+markers',
+            name='Annual Cost',
+            line=dict(color='#FF6B6B', width=3),
+            marker=dict(size=8)
+        ),
+        row=1, col=2
+    )
+    
+    fig_growth.update_layout(
+        title_text="📈 5-Year Storage Growth Impact Analysis",
+        height=400,
+        font=dict(size=12),
+        title_x=0.5
+    )
+    
+    fig_growth.update_xaxes(title_text="Annual Growth Rate (%)", row=1, col=1)
+    fig_growth.update_xaxes(title_text="Annual Growth Rate (%)", row=1, col=2)
+    fig_growth.update_yaxes(title_text="Storage Size (GB)", row=1, col=1)
+    fig_growth.update_yaxes(title_text="Annual Cost ($)", row=1, col=2)
+    
+    st.plotly_chart(fig_growth, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Cost optimization recommendations
+    st.subheader("💡 Cost Optimization Insights")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        <div class="chart-container">
+            <h4>💰 Cost Optimization Tips</h4>
+            <ul>
+                <li><strong>Environment Sizing:</strong> Use DEV/QA factors to reduce non-production costs by 50-75%</li>
+                <li><strong>Engine Selection:</strong> PostgreSQL offers best cost-performance for most workloads</li>
+                <li><strong>Read Replicas:</strong> Distribute read load to optimize writer instance sizing</li>
+                <li><strong>Storage Growth:</strong> Monitor growth rates - 20%+ annual growth significantly impacts costs</li>
+                <li><strong>Regional Choice:</strong> US-East-1 typically offers lowest pricing</li>
+                <li><strong>Instance Right-sizing:</strong> Aurora auto-scaling can optimize reader costs</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div class="chart-container">
+            <h4>🎯 Performance Optimization Tips</h4>
+            <ul>
+                <li><strong>Read/Write Distribution:</strong> 80%+ read workloads benefit most from read replicas</li>
+                <li><strong>Memory Optimization:</strong> R5 instances for memory-intensive workloads</li>
+                <li><strong>CPU Optimization:</strong> M5 instances for balanced compute needs</li>
+                <li><strong>Multi-AZ Benefits:</strong> Provides HA with minimal performance impact</li>
+                <li><strong>Aurora Global:</strong> Best for global applications with <100ms latency needs</li>
+                <li><strong>Workload Patterns:</strong> Match instance types to workload characteristics</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
 # AWS Credentials Setup Instructions
 with st.expander("🔧 AWS Credentials Setup for Real-time Pricing"):
     st.markdown("""
@@ -1498,18 +2343,32 @@ with st.expander("🔧 AWS Credentials Setup for Real-time Pricing"):
 st.markdown("---")
 st.markdown("""
 **🎯 Enhanced Features:**
+- ✅ **Advanced Visualizations**: Interactive charts, pie charts, heatmaps, radar charts, and gauges
 - ✅ **Single & Bulk Workload Processing**: Handle individual workloads or process multiple workloads from CSV/Excel files
 - ✅ **Real-time AWS Pricing**: Live pricing from AWS Pricing API with regional variations
-- ✅ **Reader/Writer Optimization**: Separate sizing for Multi-AZ deployments 
+- ✅ **Reader/Writer Optimization**: Separate sizing for Multi-AZ deployments with intelligent distribution
+- ✅ **Smart Analytics Dashboard**: Comprehensive insights into deployment options, regional costs, and optimization opportunities
+- ✅ **Interactive Cost Analysis**: Pie charts, heatmaps, and comparative visualizations for better decision making
+- ✅ **Workload Pattern Visualization**: Gauges, distribution charts, and storage growth projections
+- ✅ **Environment Comparison**: Radar charts and scatter plots for multi-dimensional analysis
 - ✅ **Smart Caching**: 1-hour cache for performance with manual refresh option
 - ✅ **Fallback Support**: Graceful degradation when AWS API is unavailable
 - ✅ **Comprehensive Export**: Export individual or bulk results with detailed cost breakdowns
-- ✅ **Visual Analytics**: Interactive charts for cost comparison and analysis
-- ✅ **Template Support**: Ready-to-use CSV/Excel templates for bulk uploads
 
 **🔧 Bulk Upload Benefits:**
-- 📊 Process dozens of workloads simultaneously
-- 💰 Compare costs across different environments and workloads
-- 📈 Generate comprehensive reports and visualizations
+- 📊 Process dozens of workloads simultaneously with enhanced visualizations
+- 💰 Compare costs across different workloads and environments with interactive charts
+- 📈 Generate comprehensive reports with heatmaps, pie charts, and trend analysis
 - ⚡ Use real-time AWS pricing for accurate cost estimates
+- 🎯 Advanced analytics dashboard for strategic planning and optimization
+
+**📊 Visualization Features:**
+- 🥧 **Pie Charts**: Cost breakdowns, engine distributions, deployment comparisons
+- 📊 **Bar Charts**: Environment comparisons, regional costs, workload analysis
+- 🔥 **Heatmaps**: Multi-workload cost analysis across environments
+- 📡 **Radar Charts**: Multi-dimensional environment comparisons
+- ⚡ **Gauges**: Resource utilization and performance indicators
+- 📈 **Line Charts**: Storage growth projections and trend analysis
+- 🎯 **Scatter Plots**: Performance vs cost analysis and efficiency comparisons
+- 📋 **Interactive Tables**: Sortable, filterable data with export capabilities
 """)
