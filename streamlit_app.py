@@ -148,7 +148,7 @@ class RealTimeRDSSizingCalculator:
             
             instances = []
             next_token = None
-            max_pages = 5  # Limit to prevent long waits
+            max_pages = 3  # Limit to prevent long waits on Streamlit Cloud
             page_count = 0
             
             # Progress indicator
@@ -165,13 +165,13 @@ class RealTimeRDSSizingCalculator:
                             ServiceCode='AmazonRDS',
                             Filters=filters,
                             NextToken=next_token,
-                            MaxResults=100
+                            MaxResults=50  # Smaller batches for cloud
                         )
                     else:
                         response = self.pricing_client.get_products(
                             ServiceCode='AmazonRDS',
                             Filters=filters,
-                            MaxResults=100
+                            MaxResults=50
                         )
                     
                     for price_item in response['PriceList']:
@@ -710,22 +710,22 @@ else:
 # AWS Credentials Setup Instructions
 with st.expander("🔧 AWS Credentials Setup for Real-time Pricing"):
     st.markdown("""
-    To enable real-time pricing, configure AWS credentials using one of these methods:
+    To enable real-time pricing, configure AWS credentials in Streamlit Cloud:
     
-    **Option 1: AWS CLI (Recommended)**
-    ```bash
-    aws configure
+    **Option 1: Streamlit Secrets (Recommended for Cloud)**
+    Add to your `.streamlit/secrets.toml`:
+    ```toml
+    [aws]
+    access_key_id = "your_access_key"
+    secret_access_key = "your_secret_key"
+    region = "us-east-1"
     ```
     
     **Option 2: Environment Variables**
-    ```bash
-    export AWS_ACCESS_KEY_ID=your_access_key
-    export AWS_SECRET_ACCESS_KEY=your_secret_key
-    export AWS_DEFAULT_REGION=us-east-1
-    ```
-    
-    **Option 3: IAM Role (if running on EC2)**
-    - Attach an IAM role with `pricing:GetProducts` permission
+    Set in your deployment environment:
+    - `AWS_ACCESS_KEY_ID`
+    - `AWS_SECRET_ACCESS_KEY`
+    - `AWS_DEFAULT_REGION`
     
     **Required IAM Permissions:**
     ```json
@@ -742,14 +742,6 @@ with st.expander("🔧 AWS Credentials Setup for Real-time Pricing"):
             }
         ]
     }
-    ```
-    
-    **Test Your Setup:**
-    ```python
-    import boto3
-    pricing = boto3.client('pricing', region_name='us-east-1')
-    response = pricing.describe_services(ServiceCode='AmazonRDS', MaxResults=1)
-    print("✅ AWS Pricing API access confirmed!")
     ```
     """)
 
@@ -820,7 +812,7 @@ col1, col2, col3 = st.columns([2, 1, 1])
 
 with col1:
     if st.button("🚀 Generate Sizing with Real-time Pricing", type="primary", use_container_width=True):
-        with st.spinner("🔄 Fetching real-time pricing and calculating sizing..."):
+        with st.spinner("🔄 Calculating sizing and fetching pricing..."):
             start_time = time.time()
             
             try:
@@ -946,7 +938,6 @@ if 'results' in st.session_state:
             """, unsafe_allow_html=True)
         
         with col4:
-            generation_time = st.session_state.get('generation_time', 0)
             pricing_source = prod_result.get('pricing_source', 'unknown')
             source_emoji = "🔴" if pricing_source == "AWS_API" else "📝"
             st.markdown(f"""
@@ -1128,5 +1119,7 @@ st.markdown("""
 - ✅ **Smart Caching**: 1-hour cache for performance with manual refresh option
 - ✅ **Fallback Support**: Graceful degradation when AWS API is unavailable
 - ✅ **Cost Visualization**: Interactive charts showing cost breakdowns and trends
- 
+
+**🔧 AWS Configuration:**
+Configure AWS credentials in your app's secrets or environment variables for real-time pricing.
 """)
